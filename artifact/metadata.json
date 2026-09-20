@@ -1,0 +1,94 @@
+{
+  "model_version": "german-credit-1.0",
+  "features": [
+    "age",
+    "sex",
+    "job",
+    "housing",
+    "saving_accounts",
+    "checking_account",
+    "credit_amount",
+    "duration",
+    "purpose"
+  ],
+  "threshold": 0.5,
+  "positive_class": "bad",
+  "negative_class": "good",
+  "target_column": "Risk",
+  "source_url": "https://www.kaggle.com/datasets/kabure/german-credit-data-with-risk",
+  "source_file": "german_credit_data.csv",
+  "source_sha256": "42be3b82a2e5073bd5ca23bce1d1c31426b78f72d20cd892f3aacaa2ba30a075",
+  "sklearn_version": "1.6.1",
+  "random_state": 42,
+  "train_rows": 800,
+  "test_rows": 200,
+  "class_counts": {
+    "good": 700,
+    "bad": 300
+  },
+  "missing_values": {
+    "age": 0,
+    "sex": 0,
+    "job": 0,
+    "housing": 0,
+    "saving_accounts": 183,
+    "checking_account": 394,
+    "credit_amount": 0,
+    "duration": 0,
+    "purpose": 0
+  },
+  "observed_categories": {
+    "sex": [
+      "female",
+      "male"
+    ],
+    "job": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "housing": [
+      "free",
+      "own",
+      "rent"
+    ],
+    "saving_accounts": [
+      "little",
+      "moderate",
+      "quite rich",
+      "rich"
+    ],
+    "checking_account": [
+      "little",
+      "moderate",
+      "rich"
+    ],
+    "purpose": [
+      "business",
+      "car",
+      "domestic appliances",
+      "education",
+      "furniture/equipment",
+      "radio/TV",
+      "repairs",
+      "vacation/others"
+    ]
+  },
+  "observed_numeric_ranges": {
+    "age": {
+      "min": 19.0,
+      "max": 75.0
+    },
+    "credit_amount": {
+      "min": 250.0,
+      "max": 18424.0
+    },
+    "duration": {
+      "min": 4.0,
+      "max": 72.0
+    }
+  },
+  "test_accuracy": 0.74,
+  "test_roc_auc": 0.7613095238095238
+}
