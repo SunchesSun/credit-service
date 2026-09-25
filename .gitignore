@@ -5,4 +5,4 @@ __pycache__/
 *.py[cod]
 .env
 .ipynb_checkpoints/
-datasets/*.csv
+data/*.csv
