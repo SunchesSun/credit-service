@@ -1,0 +1,4 @@
+German Credit Risk - With Target
+https://www.kaggle.com/datasets/kabure/german-credit-data-with-risk
+Source CSV: datasets/german_credit_data.csv; target: Risk (bad=1, good=0).
+Column mapping and missing values: datasets/README.md and metadata.json.

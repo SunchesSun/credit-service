@@ -1,0 +1,11 @@
+{
+  "age": 67,
+  "sex": "male",
+  "job": 2,
+  "housing": "own",
+  "saving_accounts": null,
+  "checking_account": "little",
+  "credit_amount": 1169,
+  "duration": 6,
+  "purpose": "radio/TV"
+}
