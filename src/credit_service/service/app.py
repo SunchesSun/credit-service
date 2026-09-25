@@ -19,15 +19,14 @@ from credit_service.config import settings
 
 class Features(BaseModel):
     model_config = {"extra": "forbid", "allow_inf_nan": False, "strict": True}
-    # Bounds are the observed training ranges recorded in artifact/metadata.json.
-    age: int = Field(ge=19, le=75)
+    age: int = Field(gt=0, lt=120)
     sex: Literal["female", "male"]
     job: int = Field(ge=0, le=3)
     housing: Literal["free", "own", "rent"]
     saving_accounts: Literal["little", "moderate", "quite rich", "rich"] | None = None
     checking_account: Literal["little", "moderate", "rich"] | None = None
-    credit_amount: float = Field(ge=250, le=18424)
-    duration: int = Field(ge=4, le=72)
+    credit_amount: float = Field(gt=0)
+    duration: int = Field(gt=0)
     purpose: Literal["business", "car", "domestic appliances", "education",
                       "furniture/equipment", "radio/TV", "repairs", "vacation/others"]
 
