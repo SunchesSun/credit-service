@@ -9,6 +9,18 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env: {POSTGRES_PASSWORDS: test, POSTGRES_DB: credit}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd: "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:test@localhost:5432/credit
+
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
