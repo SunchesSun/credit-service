@@ -1,6 +1,6 @@
 [project]
 name = "credit-service"
-version = "1.1.0"
+version = "1.2.0"
 description = "German credit risk scoring service"
 requires-python=">=3.11,<3.13"
 
@@ -33,6 +33,7 @@ module-name = "credit_service"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["integration: нужна база данных - адрес в DATABASE_URL"]
 
 [tool.ruff]
 line-length = 150
