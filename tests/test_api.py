@@ -4,7 +4,10 @@ from credit_service.service.app import app
 
 
 def test_health(client):
-    assert client.get("/health").json()["model_version"] == app.state.meta["model_version"]
+    response = client.get("/health")
+
+    assert response.json()["model_version"] == app.state.meta["model_version"]
+    assert response.json()["model_path"] == "artifact/model.joblib"
 
 
 def test_ready(client):

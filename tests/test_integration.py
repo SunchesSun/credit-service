@@ -26,3 +26,23 @@ def test_prediction_is_logged(client, good_row):
     assert row[1]["score"] == pytest.approx(body["score"])
     assert row[2] == good_row
     assert row[3] == 200
+
+
+def test_validation_failure_is_logged(client, good_row):
+    invalid_row = {**good_row, "age": 0}
+    response = client.post("/v1/predict", json=invalid_row)
+
+    assert response.status_code == 422
+
+    with psycopg.connect(settings.database_url) as conn:
+        row = conn.execute(
+            "SELECT model_version, prediction, features, status_code "
+            "FROM predictions WHERE request_id = %s",
+            (response.headers["X-Request-ID"],),
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == client.get("/health").json()["model_version"]
+    assert row[1] is None
+    assert row[2] == invalid_row
+    assert row[3] == 422

@@ -96,14 +96,15 @@ jobs:
           kubectl set image deploy/credit-service api="$IMAGE"
           kubectl rollout status deploy/credit-service --timeout=120s
 
-      - name: smoke #TODO
+      - name: smoke
         run: |
           kubectl port-forward svc/credit-service 8080:80 &
           sleep 5
 
           curl --fail -s localhost:8080/health; echo
           curl --fail -s -X POST localhost:8080/v1/predict \
-            -H "Content-Type: application/json" -d @good.json; echo
+            -H "Content-Type: application/json" -d @good.json \
+          | python3 -c "import json,sys; r=json.load(sys.stdin); assert 0 <= r['score'] <= 1, r"
 
           sleep 2
 
