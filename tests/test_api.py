@@ -7,7 +7,7 @@ def test_health(client):
     response = client.get("/health")
 
     assert response.json()["model_version"] == app.state.meta["model_version"]
-    assert response.json()["model_path"] == "artifact/model.joblib"
+    assert response.json()["model_path"] == "broken/model.joblib"
 
 
 def test_ready(client):
