@@ -3,6 +3,7 @@
 .ruff_cache/
 __pycache__/
 *.py[cod]
+.ruff_cache/
 .env
 .ipynb_checkpoints/
 data/*.csv
