@@ -116,5 +116,10 @@ jobs:
 
         run: |
           kubectl get pods -o wide
+          kubectl get events --sort-by=.lastTimestamp
+          kubectl describe pods -l app=credit
           kubectl describe deploy/credit-service | tail -20
-          kubectl logs deploy/credit-service --tail=30 || true
+          kubectl logs -l app=credit \
+            --all-containers=true --tail=50 --prefix=true || true
+          kubectl logs -l app=credit \
+            --all-containers=true --previous --tail=50 --prefix=true || true
