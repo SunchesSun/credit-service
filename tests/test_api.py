@@ -1,5 +1,6 @@
 import pytest
 
+from credit_service.config import settings
 from credit_service.service.app import app
 
 
@@ -8,6 +9,7 @@ def test_health(client):
 
     assert response.json()["model_version"] == app.state.meta["model_version"]
     assert response.json()["model_path"] == "artifact/model.joblib"
+    assert response.json()["log_level"] == settings.log_level
 
 
 def test_ready(client):

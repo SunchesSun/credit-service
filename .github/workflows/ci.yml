@@ -101,7 +101,8 @@ jobs:
           kubectl port-forward svc/credit-service 8080:80 &
           sleep 5
 
-          curl --fail -s localhost:8080/health; echo
+          curl --fail -s localhost:8080/health \
+          | python3 -c "import json,sys; r=json.load(sys.stdin); assert r['log_level'] == 'INFO', r"
           curl --fail -s -X POST localhost:8080/v1/predict \
             -H "Content-Type: application/json" -d @good.json \
           | python3 -c "import json,sys; r=json.load(sys.stdin); assert 0 <= r['score'] <= 1, r"

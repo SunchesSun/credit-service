@@ -41,6 +41,8 @@ class Prediction(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.setLevel(settings.log_level)
+
     bundle = joblib.load(settings.model_path)
     app.state.pipeline = bundle["pipeline"]
     app.state.meta = bundle["metadata"]
@@ -99,6 +101,7 @@ def health():
         "status": "ok",
         "model_version": getattr(app.state, "version", "unknown"),
         "model_path": settings.model_path,
+        "log_level": settings.log_level,
     }
 
 
