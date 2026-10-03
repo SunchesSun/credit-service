@@ -103,14 +103,17 @@ jobs:
 
           curl --fail -s localhost:8080/health \
           | python3 -c "import json,sys; r=json.load(sys.stdin); assert r['log_level'] == 'INFO', r"
-          curl --fail -s -X POST localhost:8080/v1/predict \
-            -H "Content-Type: application/json" -d @good.json \
-          | python3 -c "import json,sys; r=json.load(sys.stdin); assert 0 <= r['score'] <= 1, r"
+          request_id="$(
+            curl --fail -s -X POST localhost:8080/v1/predict \
+              -H "Content-Type: application/json" -d @good.json \
+            | python3 -c "import json,sys; r=json.load(sys.stdin); assert 0 <= r['score'] <= 1, r; print(r['request_id'])"
+          )"
 
           sleep 2
 
           kubectl exec deploy/postgres -- psql -U postgres -d credit \
-            -tc "SELECT count(*) FROM predictions" | grep -q 1
+            -Atc "SELECT count(*) FROM predictions WHERE request_id = '$request_id'::uuid AND status_code = 200" \
+          | grep -qx 1
 
       - name: диагностика
         if: failure()
