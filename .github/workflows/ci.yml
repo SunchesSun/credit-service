@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   tests:
@@ -56,9 +57,14 @@ jobs:
 
   deploy:
     needs: build
-    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, kind]
+    concurrency: {group: deploy-kind-mlpro3}
+    timeout-minutes: 15
 
     permissions: {contents: read, packages: read}
+    env:
+      KIND_CLUSTER: mlpro3
 
     steps:
       - uses: actions/checkout@v7
@@ -69,21 +75,51 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: helm/kind-action@v1
-        with: {cluster_name: ci}
+      - name: kind, kubectl и доступ к кластеру
+        run: |
+          bin="$HOME/.local/bin"
+          mkdir -p "$bin"
+          echo "$bin" >> "$GITHUB_PATH"
+          if [ ! -x "$bin/kind" ]; then
+            curl --fail --silent --show-error --location \
+              --output "$bin/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64
+            chmod +x "$bin/kind"
+          fi
+          if [ ! -x "$bin/kubectl" ]; then
+            curl --fail --silent --show-error --location \
+              --output "$bin/kubectl" https://dl.k8s.io/v1.37.0/bin/linux/amd64/kubectl
+            chmod +x "$bin/kubectl"
+          fi
+          if [ "$(docker inspect --format '{{.State.Running}}' "$KIND_CLUSTER-control-plane")" != "true" ]; then
+            docker start "$KIND_CLUSTER-control-plane"
+          fi
+          "$bin/kind" export kubeconfig --name "$KIND_CLUSTER" --internal
+          for attempt in {1..60}; do
+            if "$bin/kubectl" --request-timeout=5s get --raw=/readyz >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo "Kubernetes API did not become ready" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          "$bin/kubectl" wait --for=condition=Ready node --all --timeout=120s
 
-      - name: образ в кластер (так делать плохо)
+      - name: образ в кластер
         run: |
           docker pull "$IMAGE"
-          kind load docker-image "$IMAGE" --name ci
+          kind load docker-image "$IMAGE" --name "$KIND_CLUSTER"
 
       - name: подтягиваем секреты
         env:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
+          : "${DB_PASSWORD:?DB_PASSWORD secret is required}"
           kubectl create secret generic credit-secrets \
           --from-literal=POSTGRES_PASSWORD="$DB_PASSWORD" \
-          --from-literal=DATABASE_URL="postgresql://postgres:$DB_PASSWORD@postgres:5432/credit"
+          --from-literal=DATABASE_URL="postgresql://postgres:$DB_PASSWORD@postgres:5432/credit" \
+          --dry-run=client -o yaml | kubectl apply -f -
 
       - name: база
         run: |
