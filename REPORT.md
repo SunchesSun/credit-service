@@ -101,3 +101,52 @@ kubectl logs -l app=credit --all-containers=true --previous --tail=50 --prefix=t
 Такой набор команд покрывает все три базовые поломки: события объясняют `Pending` при нехватке памяти, описание pod — `CreateContainerConfigError` при отсутствующем Secret, а предыдущий лог — падение загрузки модели при `CrashLoopBackOff`.
 
 Проверка сделана отдельным коммитом `0fbe2995d119272808e6b000f59c389548bde9b8`: `MODEL_PATH` был заменён на `artifact/missing-model.joblib`. В [красном deploy job](https://github.com/SunchesSun/credit-service/actions/runs/36345487325/job/108693839746) шаг `сервис` завершился с ошибкой, а следующий шаг `диагностика` успешно выполнился. После возврата `artifact/model.joblib` в коммите `baa4963e942145399f6eb9ca35f3c9cd9433e993` [прогон 36345927955](https://github.com/SunchesSun/credit-service/actions/runs/36345927955) стал зелёным.
+
+## Домашняя работа 3 — обучение и гейт MLflow (пункт 2.2)
+
+В исходных данных класс `bad` встречается реже `good` (300 и 700 строк соответственно), поэтому для гейта выбрана PR-AUC по вероятности `bad`. Запас `GATE_MIN_GAIN=0.01` требует прироста PR-AUC больше 0.01 относительно текущего `champion`; равный результат, как у версии 2, не меняет алиас. Во всех трёх запусках ниже использовались одинаковые данные и разбиение (`random_state=42`), а менялись сила регуляризации `C` и вес класса `bad`.
+
+| Версия | Run ID | `C` | Вес `bad` | PR-AUC | Решение гейта | `champion` после запуска |
+|---|---|---:|---:|---:|---|---|
+| 3 | `59baab5362b948b4859d6c2b31b0cf10` | 0.007 | 1 | 0.628601 | Принята: предыдущая версия 1 имела 0.617173 | 3 |
+| 4 | `29f04cb543314db1a940b7486447d604` | 0.000001 | 1 | 0.579212 | Отклонена; версия 4 получила только `challenger` | 3 |
+| 5 | `2543660b024f407b9125b5aa8d92ca29` | 0.01 | 2 | 0.644035 | Принята: прирост относительно версии 3 равен 0.015435 | 5 |
+
+Каждый запуск сохранил `metadata.json` с признаками и порогом, `confusion_matrix.json` и собственный артефакт `precision_recall_curve.png` через `mlflow.log_figure`. Параметр `data_md5` во всех трёх запусках равен `3086216ff1ff32f7626554e730cccc91`.
+Копия [PR-кривой версии 5](docs/hw3/precision_recall_curve.png) сохранена вместе с доказательствами задания.
+Вывод команд с решениями гейта сохранён в [`docs/hw3/train_runs.txt`](docs/hw3/train_runs.txt).
+
+## Домашняя работа 3 — откат модели (пункт 2.3)
+
+Сервис загружает модель по алиасу `german-credit@champion` при запуске; без `MODEL_NAME` остаётся загрузка локального файла для CI. После обучения версии 5 pod были перезапущены, и [`/health` до отката](docs/hw3/health_before_rollback.json) показывал `german-credit-v5`. Затем в MLflow Model registry алиас `champion` был перенесён с версии 5 на прежний champion, версию 3. После `kubectl rollout restart deploy/credit-service` [`/health` после отката](docs/hw3/health_after_rollback.json) показывал `german-credit-v3`; обе реплики стали Ready. Образ Deployment остался `ghcr.io/sunchessun/credit-service:sha-87abc5e6ced57069822c47fb0865436d1cf7c5ed`, пересборки не было.
+
+После клика в UI первый ответ `/health` со старой версией появился **примерно через 9–10 секунд**. Наблюдение проверяло алиас каждые 0,5 секунды; измеренное время от обнаружения смены алиаса до ответа составило 8,95 секунды. Поэтому время от клика указано приблизительно: задержка до обнаружения алиаса отдельно не измерялась. Полный rollout занял 20,3 секунды. После опыта `champion` указывает на версию 3, `challenger` — на версию 5.
+Версии модели и колонка алиасов видны на [скрине Model registry](docs/hw3/mlflow_model_registry_aliases.png).
+
+## Домашняя работа 3 — CI/CD и smoke-проверка (пункт 2.4)
+
+Job `deploy` в `.github/workflows/ci.yml` выполняется на runner с метками `self-hosted` и `kind`. Контейнер `gh-runner` запущен в Docker-сети `kind`; его зарегистрированное имя — `mlpro3-kind`. Шаг создания `credit-secrets` применяет результат `kubectl create secret --dry-run=client -o yaml` через `kubectl apply`, поэтому повторный деплой обновляет Secret.
+
+Smoke-шаг обращается к сервису через Traefik Ingress (`Host: credit.localhost`, порт 30080 узла `mlpro3-control-plane`). Он проверяет, что `/health` сообщает о загрузке `models:/german-credit@champion`, отправляет пример из `good.json` в `/v1/predict`, проверяет вероятность, решение по порогу 0.5 и версию модели, затем ищет в PostgreSQL ровно одну строку с тем же `request_id`, версией и кодом 200.
+
+Этот smoke-скрипт извлечён из workflow и успешно выполнен внутри контейнера `gh-runner` на работающем кластере: `/health` показал `german-credit-v3`, ответ предсказания содержал `score=0.1887866461272916`, `is_bad_risk=false`, `model_version=german-credit-v3`, а проверка строки в PostgreSQL завершилась с кодом 0.
+
+После публикации изменений [workflow run #33](https://github.com/SunchesSun/credit-service/actions/runs/37229900482) для коммита `15afa42e8018e737b8389cafa2919543a84db11e` на `main` завершился успешно: jobs `tests`, `build` и [`deploy`](https://github.com/SunchesSun/credit-service/actions/runs/37229900482/job/111517592279) зелёные. В `deploy` использовался runner `mlpro3-kind`, а шаг `smoke` завершился успешно. В кластере после этого запущен образ с тем же SHA, обе реплики API доступны; дополнительный запрос через Ingress вернул `german-credit-v3`, и PostgreSQL содержал ровно одну строку с его `request_id` и кодом 200.
+
+По подтверждению владельца репозитория в Settings → Actions → General включено `Require approval for all external contributors`.
+На [скриншоте Settings → Actions → Runners](docs/hw3/github_actions_runner.png) видны runner `mlpro3-kind`, метка `kind` и статус `Idle` (runner онлайн и ожидает задания).
+
+## Домашняя работа 3 — версии данных в DVC (пункт 2.5)
+
+Исходный `datasets/german_credit_data.csv` перенесён из Git в DVC в коммите `9030a294334cb3a642831491b227b8f3630d3562`. Репозиторий хранит [`datasets/german_credit_data.csv.dvc`](datasets/german_credit_data.csv.dvc) с MD5 и размером файла, а сам CSV исключён из Git через `datasets/.gitignore`. Локальный remote DVC — `../dvc-storage` относительно корня проекта; в `.dvc/config` он записан как `../../dvc-storage`. Зависимость DVC уже была в `pyproject.toml`, поэтому добавлять её повторно не потребовалось.
+
+В коммите `6e15c46a24e41a962d604e6c6873e3bfb449081a` создана вторая версия: удалены 99 строк, в которых одновременно отсутствовали `Saving accounts` и `Checking account`. В ней 901 строка вместо 1000. Для обеих версий `dvc push` вывел `1 file pushed`; `dvc diff HEAD~1` показал `Modified: datasets/german_credit_data.csv`. После переключения указателя и `dvc checkout` восстановились сначала исходные 1000 строк с MD5 `3086216ff1ff32f7626554e730cccc91`, затем 901 строка с MD5 `75716716a440972dfc0fed80bb7791cc`. В отдельном чистом клоне `dvc pull` вывел `1 file fetched and 1 file added` и восстановил текущий CSV с тем же MD5. [Вывод проверок](docs/hw3/dvc_verification.txt).
+
+| Версия модели в MLflow | Run ID | Строк данных | `data_md5` | PR-AUC |
+|---|---|---:|---|---:|
+| 6 | `29418906d9394f0f8e832f3b5dbc7fba` | 1000 | `3086216ff1ff32f7626554e730cccc91` | 0.617173 |
+| 7 | `512a720820a3424393a614992ada0c3d` | 901 | `75716716a440972dfc0fed80bb7791cc` | 0.610738 |
+
+[Скрин сравнения двух запусков MLflow](docs/hw3/mlflow_dvc_data_versions.png) показывает оба Run ID и разные `data_md5`.
+
+Оба запуска не прошли гейт относительно `champion` версии 3, поэтому работающий сервис продолжает использовать прежнюю модель. После переноса CSV тесты не требуют полного датасета (`25 passed`, `2 skipped`), Ruff также прошёл. Dockerfile копирует `src/` и `artifact/`, а CSV не копирует.

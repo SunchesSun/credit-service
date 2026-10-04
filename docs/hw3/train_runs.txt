@@ -1,0 +1,8 @@
+MLFLOW_TRACKING_URI=http://mlflow.localhost C=0.007 BAD_CLASS_WEIGHT=1 uv run python -m credit_service.train
+{"run_id": "59baab5362b948b4859d6c2b31b0cf10", "version": "3", "pr_auc": 0.6286, "champion_before": "1", "champion_pr_auc_before": 0.6171725049037963, "promoted": true}
+
+MLFLOW_TRACKING_URI=http://mlflow.localhost C=0.000001 BAD_CLASS_WEIGHT=1 uv run python -m credit_service.train
+{"run_id": "29f04cb543314db1a940b7486447d604", "version": "4", "pr_auc": 0.5792, "champion_before": "3", "champion_pr_auc_before": 0.6286006827322147, "promoted": false}
+
+MLFLOW_TRACKING_URI=http://mlflow.localhost C=0.01 BAD_CLASS_WEIGHT=2 uv run python -m credit_service.train
+{"run_id": "2543660b024f407b9125b5aa8d92ca29", "version": "5", "pr_auc": 0.644, "champion_before": "3", "champion_pr_auc_before": 0.6286006827322147, "promoted": true}

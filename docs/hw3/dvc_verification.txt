@@ -1,0 +1,38 @@
+Пункт 2.5. Проверки на ветке stage-3.
+
+Исходный CSV: 1000 строк, MD5 3086216ff1ff32f7626554e730cccc91.
+Коммит DVC v1: 9030a294334cb3a642831491b227b8f3630d3562.
+uv run dvc push
+1 file pushed
+
+Вторая версия: удалены 99 строк, где оба поля Saving accounts и Checking account равны NA; осталось 901 строк.
+Коммит DVC v2: 6e15c46a24e41a962d604e6c6873e3bfb449081a.
+uv run dvc push
+1 file pushed
+
+uv run dvc diff HEAD~1
+Modified:
+    datasets/german_credit_data.csv
+
+files summary: 1 modified
+
+git checkout HEAD~1 -- datasets/german_credit_data.csv.dvc
+uv run dvc checkout
+restored_v1_md5=3086216ff1ff32f7626554e730cccc91
+restored_v1_rows=1000
+
+git checkout HEAD -- datasets/german_credit_data.csv.dvc
+uv run dvc checkout
+restored_v2_md5=75716716a440972dfc0fed80bb7791cc
+restored_v2_rows=901
+
+В отдельном чистом клоне ../hw1-dvc-verify, до dvc pull CSV отсутствовал:
+uv run dvc pull
+A       datasets/german_credit_data.csv
+1 file fetched and 1 file added
+pulled_md5=75716716a440972dfc0fed80bb7791cc
+pulled_rows=901
+
+MLflow:
+version=6 run_id=29418906d9394f0f8e832f3b5dbc7fba data_md5=3086216ff1ff32f7626554e730cccc91 pr_auc=0.617173
+version=7 run_id=512a720820a3424393a614992ada0c3d data_md5=75716716a440972dfc0fed80bb7791cc pr_auc=0.610738
