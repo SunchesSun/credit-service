@@ -134,21 +134,35 @@ jobs:
 
       - name: smoke
         run: |
-          kubectl port-forward svc/credit-service 8080:80 &
-          sleep 5
+          set -euo pipefail
+          url="http://${KIND_CLUSTER}-control-plane:30080"
+          host="Host: credit.localhost"
 
-          curl --fail -s localhost:8080/health \
-          | python3 -c "import json,sys; r=json.load(sys.stdin); assert r['log_level'] == 'INFO', r"
-          request_id="$(
-            curl --fail -s -X POST localhost:8080/v1/predict \
-              -H "Content-Type: application/json" -d @good.json \
-            | python3 -c "import json,sys; r=json.load(sys.stdin); assert 0 <= r['score'] <= 1, r; print(r['request_id'])"
-          )"
+          health="$(curl --fail --silent --show-error --retry 5 --retry-all-errors -H "$host" "$url/health")"
+          echo "$health"
+          model_version="$(echo "$health" | python3 -c '
+          import json, re, sys
+          response = json.load(sys.stdin)
+          assert response["model_path"] == "models:/german-credit@champion", response
+          assert response["log_level"] == "INFO", response
+          assert re.fullmatch(r"german-credit-v\d+", response["model_version"]), response
+          print(response["model_version"])
+          ')"
 
-          sleep 2
+          prediction="$(curl --fail --silent --show-error -X POST -H "$host" \
+            -H "Content-Type: application/json" -d @good.json "$url/v1/predict")"
+          echo "$prediction"
+          request_id="$(echo "$prediction" | python3 -c '
+          import json, sys, uuid
+          response = json.load(sys.stdin)
+          assert 0 <= response["score"] <= 1, response
+          assert response["is_bad_risk"] == (response["score"] >= 0.5), response
+          assert response["model_version"] == sys.argv[1], response
+          print(uuid.UUID(response["request_id"]))
+          ' "$model_version")"
 
           kubectl exec deploy/postgres -- psql -U postgres -d credit \
-            -Atc "SELECT count(*) FROM predictions WHERE request_id = '$request_id'::uuid AND status_code = 200" \
+            -Atc "SELECT count(*) FROM predictions WHERE request_id = '$request_id'::uuid AND model_version = '$model_version' AND status_code = 200" \
           | grep -qx 1
 
       - name: диагностика

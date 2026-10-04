@@ -12,12 +12,13 @@ import mlflow
 import mlflow.sklearn
 import pandas as pd
 import sklearn
+from matplotlib import pyplot as plt
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, average_precision_score, confusion_matrix, roc_auc_score
+from sklearn.metrics import PrecisionRecallDisplay, accuracy_score, average_precision_score, confusion_matrix, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -26,6 +27,7 @@ DATA_PATH = Path(os.getenv("DATA_PATH", "datasets/german_credit_data.csv"))
 MODEL_NAME = os.getenv("MODEL_NAME", "german-credit")
 EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT", "german-credit")
 C = float(os.getenv("C", "1.0"))
+BAD_CLASS_WEIGHT = float(os.getenv("BAD_CLASS_WEIGHT", "1.0"))
 # В исходном CSV bad встречается реже good (см. class_counts в metadata.json).
 # PR-AUC оценивает ранжирование bad; 0.01 — выбранный минимальный прирост
 # для смены champion при почти одинаковом результате.
@@ -63,7 +65,9 @@ def load_and_validate(path: Path) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame
     return frame, target, data
 
 
-def build_pipeline(c: float) -> Pipeline:
+def build_pipeline(c: float, bad_class_weight: float = 1.0) -> Pipeline:
+    if bad_class_weight <= 0:
+        raise ValueError("BAD_CLASS_WEIGHT должен быть положительным")
     categorical = Pipeline([
         ("impute", SimpleImputer(strategy="constant", fill_value="missing")),
         ("encode", OneHotEncoder(handle_unknown="ignore")),
@@ -74,7 +78,10 @@ def build_pipeline(c: float) -> Pipeline:
     ])
     return Pipeline([
         ("preprocess", preprocess),
-        ("model", LogisticRegression(max_iter=1000, random_state=SEED, C=c)),
+        ("model", LogisticRegression(
+            max_iter=1000, random_state=SEED, C=c,
+            class_weight=None if bad_class_weight == 1 else {0: 1, 1: bad_class_weight},
+        )),
     ])
 
 
@@ -96,7 +103,7 @@ def main() -> dict:
     x_train, x_test, y_train, y_test = train_test_split(
         frame, target, test_size=0.2, stratify=target, random_state=SEED,
     )
-    pipeline = build_pipeline(C).fit(x_train, y_train)
+    pipeline = build_pipeline(C, BAD_CLASS_WEIGHT).fit(x_train, y_train)
     scores = pipeline.predict_proba(x_test)[:, 1]
     pr_auc = float(average_precision_score(y_test, scores))
     roc_auc = float(roc_auc_score(y_test, scores))
@@ -128,6 +135,7 @@ def main() -> dict:
     with mlflow.start_run() as run:
         mlflow.log_params({
             "C": C,
+            "bad_class_weight": BAD_CLASS_WEIGHT,
             "model": "LogisticRegression",
             "seed": SEED,
             "data": str(DATA_PATH),
@@ -138,6 +146,9 @@ def main() -> dict:
         mlflow.log_metrics({"pr_auc": pr_auc, "roc_auc": roc_auc, "accuracy": accuracy})
         mlflow.log_dict(metadata, "metadata.json")
         mlflow.log_dict({"labels": ["good", "bad"], "matrix": matrix.tolist()}, "confusion_matrix.json")
+        display = PrecisionRecallDisplay.from_predictions(y_test, scores, name="bad risk")
+        mlflow.log_figure(display.figure_, "precision_recall_curve.png")
+        plt.close(display.figure_)
         info = mlflow.sklearn.log_model(
             pipeline, name="model", registered_model_name=MODEL_NAME,
             skops_trusted_types=SKOPS_TRUSTED,
