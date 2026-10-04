@@ -15,6 +15,13 @@ dependencies = [
     "psycopg[binary]",
     "mlflow-skinny>=3.16,<4",
     "skops>=0.16.0",
+    "prometheus-client>=0.21",
+    "prometheus-fastapi-instrumentator>=8",
+    "implicit>=0.7.3",
+    "pandera>=0.33.1",
+    "scipy>=1.17.1",
+    "pyarrow>=25.0.1",
+    "dvc[s3]>=3.67.1",
 ]
 
 [dependency-groups]
@@ -42,4 +49,3 @@ line-length = 150
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
-
