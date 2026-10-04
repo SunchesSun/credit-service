@@ -5,7 +5,6 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Literal
 
-import joblib
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
@@ -13,7 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from credit_service import db
+from credit_service import db, model_store
 from credit_service.config import settings
 
 
@@ -43,10 +42,7 @@ class Prediction(BaseModel):
 async def lifespan(app: FastAPI):
     logger.setLevel(settings.log_level)
 
-    bundle = joblib.load(settings.model_path)
-    app.state.pipeline = bundle["pipeline"]
-    app.state.meta = bundle["metadata"]
-    app.state.version = bundle["metadata"]["model_version"]
+    app.state.pipeline, app.state.meta, app.state.version = model_store.load_model()
 
     db.init()
 
@@ -84,7 +80,7 @@ async def audit(request: Request, call_next):
             request.state.request_id,
             features,
             request.state.prediction,
-            app.state.meta["model_version"],
+            app.state.version,
             latency,
             response.status_code,
         )
@@ -100,7 +96,7 @@ def health():
     return {
         "status": "ok",
         "model_version": getattr(app.state, "version", "unknown"),
-        "model_path": settings.model_path,
+        "model_path": settings.model_path if not settings.model_name else f"models:/{settings.model_name}@{settings.model_alias}",
         "log_level": settings.log_level,
     }
 
