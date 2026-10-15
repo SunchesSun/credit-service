@@ -5,7 +5,7 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-    - host: credit-wrong.localhost
+    - host: credit.localhost
       http:
         paths:
           - path: /
