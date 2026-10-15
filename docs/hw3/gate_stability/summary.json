@@ -1,0 +1,185 @@
+{
+  "python_version": "3.11.16",
+  "sklearn_version": "1.6.1",
+  "split_seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49
+  ],
+  "test_size": 0.2,
+  "stratified": true,
+  "model_random_state": 42,
+  "metric": "average_precision_score, positive class bad",
+  "datasets": [
+    {
+      "source_path": ".dvc/cache/files/md5/30/86216ff1ff32f7626554e730cccc91",
+      "data_md5": "3086216ff1ff32f7626554e730cccc91",
+      "rows": 1000,
+      "class_counts": {
+        "bad": 300,
+        "good": 700
+      },
+      "v3": {
+        "min": 0.4598544223023583,
+        "max": 0.6833591264653036,
+        "mean": 0.5627370399035293,
+        "sample_std": 0.0576875681531415,
+        "range": 0.22350470416294532
+      },
+      "v5": {
+        "min": 0.4703512899673238,
+        "max": 0.695769657057738,
+        "mean": 0.5734304532949078,
+        "sample_std": 0.058832826412246096,
+        "range": 0.22541836709041418
+      },
+      "paired_v5_minus_v3": {
+        "min": -0.020728919760290343,
+        "max": 0.03681455915994725,
+        "mean": 0.01069341339137854,
+        "sample_std": 0.010461832828693222,
+        "range": 0.05754347892023759
+      },
+      "v5_positive_gain_splits": 45,
+      "seed_42": [
+        {
+          "data_md5": "3086216ff1ff32f7626554e730cccc91",
+          "rows": 1000,
+          "split_seed": 42,
+          "configuration": "v3",
+          "C": 0.007,
+          "bad_class_weight": 1.0,
+          "train_rows": 800,
+          "test_rows": 200,
+          "test_bad": 60,
+          "pr_auc": 0.6286006827322147
+        },
+        {
+          "data_md5": "3086216ff1ff32f7626554e730cccc91",
+          "rows": 1000,
+          "split_seed": 42,
+          "configuration": "v5",
+          "C": 0.01,
+          "bad_class_weight": 2.0,
+          "train_rows": 800,
+          "test_rows": 200,
+          "test_bad": 60,
+          "pr_auc": 0.6440352890308076
+        }
+      ]
+    },
+    {
+      "source_path": "datasets/german_credit_data.csv",
+      "data_md5": "75716716a440972dfc0fed80bb7791cc",
+      "rows": 901,
+      "class_counts": {
+        "bad": 291,
+        "good": 610
+      },
+      "v3": {
+        "min": 0.4327499227762337,
+        "max": 0.638729656323877,
+        "mean": 0.5574868129885353,
+        "sample_std": 0.054293393398646354,
+        "range": 0.20597973354764332
+      },
+      "v5": {
+        "min": 0.4403696713265821,
+        "max": 0.6577121300026296,
+        "mean": 0.5657585940097806,
+        "sample_std": 0.05195556417980794,
+        "range": 0.2173424586760475
+      },
+      "paired_v5_minus_v3": {
+        "min": -0.014004144797634233,
+        "max": 0.029135411398023114,
+        "mean": 0.008271781021245272,
+        "sample_std": 0.00985896684022098,
+        "range": 0.04313955619565735
+      },
+      "v5_positive_gain_splits": 39,
+      "seed_42": [
+        {
+          "data_md5": "75716716a440972dfc0fed80bb7791cc",
+          "rows": 901,
+          "split_seed": 42,
+          "configuration": "v3",
+          "C": 0.007,
+          "bad_class_weight": 1.0,
+          "train_rows": 720,
+          "test_rows": 181,
+          "test_bad": 58,
+          "pr_auc": 0.6241999967409972
+        },
+        {
+          "data_md5": "75716716a440972dfc0fed80bb7791cc",
+          "rows": 901,
+          "split_seed": 42,
+          "configuration": "v5",
+          "C": 0.01,
+          "bad_class_weight": 2.0,
+          "train_rows": 720,
+          "test_rows": 181,
+          "test_bad": 58,
+          "pr_auc": 0.6343304540736708
+        }
+      ]
+    }
+  ],
+  "max_v3_range": 0.22350470416294532,
+  "min_gain_rule": "ceil(max_v3_range * 100) / 100 + 0.01",
+  "recommended_min_gain": 0.24,
+  "limitations": [
+    "Repeated holdouts overlap; these are not independent test samples.",
+    "Both training and test samples change; this is split sensitivity, not test-only uncertainty.",
+    "The range over these seeds is not a bound for future splits or a significance test.",
+    "Paired comparisons apply within one data_md5; cross-version metrics are not directly comparable."
+  ]
+}

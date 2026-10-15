@@ -29,9 +29,10 @@ EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT", "german-credit")
 C = float(os.getenv("C", "1.0"))
 BAD_CLASS_WEIGHT = float(os.getenv("BAD_CLASS_WEIGHT", "1.0"))
 # В исходном CSV bad встречается реже good (см. class_counts в metadata.json).
-# PR-AUC оценивает ранжирование bad; 0.01 — выбранный минимальный прирост
-# для смены champion при почти одинаковом результате.
-MIN_GAIN = float(os.getenv("GATE_MIN_GAIN", "0.01"))
+# Обоснование запаса: REPORT.md, раздел 2.2.1; сырые замеры и правило расчёта
+# сохранены в docs/hw3/gate_stability/{scores.csv,summary.json}.
+# 0.24 = ceil(0.22350470416294532 * 100) / 100 + 0.01; это эмпирический запас.
+MIN_GAIN = float(os.getenv("GATE_MIN_GAIN", "0.24"))
 SEED = 42
 THRESHOLD = 0.5
 SKOPS_TRUSTED = ["numpy.dtype", "sklearn.compose._column_transformer._RemainderColsList"]
