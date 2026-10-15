@@ -1,0 +1,14 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: credit-service
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: credit.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: credit-service, port: {number: 80}}
