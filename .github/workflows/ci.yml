@@ -64,7 +64,7 @@ jobs:
 
     permissions: {contents: read, packages: read}
     env:
-      KIND_CLUSTER: mlpro3-missing
+      KIND_CLUSTER: mlpro3
 
     steps:
       - uses: actions/checkout@v7
