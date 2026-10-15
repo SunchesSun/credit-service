@@ -43,6 +43,8 @@ Job `deploy` в `.github/workflows/ci.yml` выполняется на runner с
 
 Smoke-шаг обращается к сервису через Traefik Ingress (`Host: credit.localhost`, порт 30080 узла `mlpro3-control-plane`). Он проверяет, что `/health` сообщает о загрузке `models:/german-credit@champion`, отправляет пример из `good.json` в `/v1/predict`, проверяет вероятность, решение по порогу 0.5 и версию модели, затем ищет в PostgreSQL ровно одну строку с тем же `request_id`, версией и кодом 200.
 
+После обратной связи в smoke добавлены ожидания `score < 0.5` и `is_bad_risk is False` для `good.json`. Теперь согласованный ответ с высоким риском (например, `score=0.9`, `is_bad_risk=true`) не проходит проверку.
+
 Этот smoke-скрипт извлечён из workflow и успешно выполнен внутри контейнера `gh-runner` на работающем кластере: `/health` показал `german-credit-v3`, ответ предсказания содержал `score=0.1887866461272916`, `is_bad_risk=false`, `model_version=german-credit-v3`, а проверка строки в PostgreSQL завершилась с кодом 0.
 
 После публикации изменений [workflow run #33](https://github.com/SunchesSun/credit-service/actions/runs/37229900482) для коммита `15afa42e8018e737b8389cafa2919543a84db11e` на `main` завершился успешно: jobs `tests`, `build` и [`deploy`](https://github.com/SunchesSun/credit-service/actions/runs/37229900482/job/111517592279) зелёные. В `deploy` использовался runner `mlpro3-kind`, а шаг `smoke` завершился успешно. В кластере после этого запущен образ с тем же SHA, обе реплики API доступны; дополнительный запрос через Ingress вернул `german-credit-v3`, и PostgreSQL содержал ровно одну строку с его `request_id` и кодом 200.

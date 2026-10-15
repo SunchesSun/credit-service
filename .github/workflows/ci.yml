@@ -157,6 +157,9 @@ jobs:
           response = json.load(sys.stdin)
           assert 0 <= response["score"] <= 1, response
           assert response["is_bad_risk"] == (response["score"] >= 0.5), response
+
+          assert response["score"] < 0.5, response
+          assert response["is_bad_risk"] is False, response
           assert response["model_version"] == sys.argv[1], response
           print(uuid.UUID(response["request_id"]))
           ' "$model_version")"

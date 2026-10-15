@@ -6,7 +6,9 @@ def test_predict_smoke(client, good_row):
     assert response.status_code == 200
     body = response.json()
     assert 0 <= body["score"] <= 1
-    assert isinstance(body["is_bad_risk"], bool)
+    # Ожидание для good.json основано на наблюдаемом ответе в REPORT.md, раздел 2.4.
+    assert body["score"] < 0.5
+    assert body["is_bad_risk"] is False
     assert body["latency_ms"] >= 0
     assert body["model_version"]
     assert str(UUID(body["request_id"])) == response.headers["X-Request-ID"]
