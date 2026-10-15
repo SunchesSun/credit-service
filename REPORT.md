@@ -8,7 +8,7 @@
 | 2.4 Деплой | [зелёный прогон](https://github.com/SunchesSun/credit-service/actions/runs/37229900482), [runner](docs/hw3/github_actions_runner.png) |
 | 2.5 DVC | [указатель данных](datasets/german_credit_data.csv.dvc), [проверки](docs/hw3/dvc_verification.txt), [два запуска MLflow](docs/hw3/mlflow_dvc_data_versions.png) |
 | 2.6 HPA | [рост и снижение реплик](docs/hw3/hpa_replicas.png), [события HPA](docs/hw3/hpa_describe.txt), [статистика Locust](docs/hw3/locust_10_stats.csv) |
-| 2.7 Диагностические прогоны | Пока не выполнено |
+| 2.7 Диагностические прогоны | [Красный прогон с отсутствующим алиасом](https://github.com/SunchesSun/credit-service/actions/runs/38794024372); зелёный после исправления и два остальных опыта ещё не зафиксированы |
 
 ## 2.1. Кластер, MLflow и Ingress
 
@@ -83,6 +83,12 @@ Metrics-server установлен в `kube-system` чартом версии 3
 
 До замера ресурсы контейнера были `requests.cpu=100m`, `requests.memory=256Mi`, лимиты `1 CPU` и `512Mi`. Максимальная наблюдавшаяся память pod во всех прогонах — 200Mi. Поэтому CPU request оставлен 100m, а memory request установлен в 272Mi: это около трети запаса над измеренным максимумом. Лимиты остались прежними. Изменение применено к работающему Deployment без смены образа; rollout завершился успешно, обе реплики Ready, `/health` возвращает `german-credit-v3`. Сразу после замены pod HPA временно показывал `<unknown>`, затем снова получил метрики и показал 1%/60%.
 
+## 2.7. Диагностические прогоны
+
+Исходный [зелёный прогон](https://github.com/SunchesSun/credit-service/actions/runs/38784981100) на коммите `069636b0cba517b3c6e721781ef29e79419263c4` подтвердил успешные `tests`, `build`, `deploy` и шаг `smoke` после усиления проверки ответа и переноса Ingress в `k8s/`.
+
+В коммите `e58f98068532b556245628fac5ab33cf39ae8917` параметр `MODEL_ALIAS` заменён с `champion` на `prod`. В [ручном прогоне](https://github.com/SunchesSun/credit-service/actions/runs/38794024372) `tests` и `build` завершились успешно, а [deploy](https://github.com/SunchesSun/credit-service/actions/runs/38794024372/job/116626134231) упал на шаге `сервис`; `smoke` был пропущен, шаг диагностики выполнен. После прогона новый pod `credit-service-75868df7c-wx6wr` находился в `CrashLoopBackOff`, а его лог содержал `mlflow.exceptions.RestException: INVALID_PARAMETER_VALUE: Registered model alias prod not found.` и `Application startup failed. Exiting.`. Ссылка на [deploy и шаг диагностики](https://github.com/SunchesSun/credit-service/actions/runs/38794024372/job/116626134231#logs). Две старые реплики при этом оставались Ready.
+
 ## Ответы на восемь вопросов
 
 ### 1. Почему облачные tests и build, но локальный deploy
@@ -103,7 +109,7 @@ Tests и build не требуют доступа к локальному kind-�
 
 ### 5. Деплой до обучения первой модели
 
-Если алиас `german-credit@champion` ещё не создан, загрузка модели при старте сервиса завершится ошибкой. В k9s pod будет перезапускаться, а в его логе будет ошибка поиска модели или алиаса; в CI `kubectl rollout status` не дождётся готовых реплик, после чего выполнится шаг диагностики. Это ожидаемое следствие текущего кода загрузки, а не отдельный проведённый красный прогон.
+Если алиас `german-credit@champion` ещё не создан, загрузка модели при старте сервиса завершится ошибкой. Аналогичный сценарий отсутствующего алиаса проверен с `MODEL_ALIAS: prod` в [красном прогоне](https://github.com/SunchesSun/credit-service/actions/runs/38794024372): новый pod перезапускался с ошибкой `Registered model alias prod not found.`, шаг `сервис` завершился ошибкой, а диагностика выполнилась. См. [deploy и шаг диагностики](https://github.com/SunchesSun/credit-service/actions/runs/38794024372/job/116626134231#logs). Опыт проводился с уже существующей моделью и отсутствующим `prod`; развёртывание до первого обучения отдельно не выполнялось.
 
 ### 6. Путь запроса к MLflow
 
