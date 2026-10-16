@@ -1,8 +1,6 @@
 """Метрики сервиса"""
 
 from prometheus_client import Counter, Histogram, Info
-
-
 HTTP_LATENCY_BUCKETS = (0.01, 0.025, 0.04, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1, 2)
 
 MODEL_INFO = Info("credit_model", "Loaded credit scoring model")
