@@ -42,7 +42,15 @@ fetch_chart() {
 }
 
 if ! kind get clusters | grep -Fxq "$cluster_name"; then
-  kind create cluster --name "$cluster_name" --config platform/kind-config.yaml \
+  kind_environment=(env)
+  for proxy_name in HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
+    case "${!proxy_name:-}" in
+      *://127.0.0.1:*|*://localhost:*|*://\[::1\]:*)
+        kind_environment+=(-u "$proxy_name")
+        ;;
+    esac
+  done
+  "${kind_environment[@]}" kind create cluster --name "$cluster_name" --config platform/kind-config.yaml \
     --image kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5 \
     --wait 120s
 else
