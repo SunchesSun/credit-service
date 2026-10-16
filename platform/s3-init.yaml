@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: s3-init
+  namespace: mlops
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 180
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: create-bucket
+          # В этом образе есть curl с AWS SigV4; основания — platform/README.md.
+          image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+          envFrom:
+            - secretRef: {name: s3-credentials}
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              s3() {
+                curl --silent --show-error --connect-timeout 5 --max-time 15 \
+                  --aws-sigv4 aws:amz:us-east-1:s3 \
+                  --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" "$@"
+              }
+              bucket=http://rustfs.mlops:9000/dvc
+              status="$(s3 --head --output /dev/null --write-out '%{http_code}' "$bucket")"
+              case "$status" in
+                200) echo 'Бакет dvc уже существует' ;;
+                404) s3 --fail --request PUT --data '' "$bucket"
+                     echo 'Бакет dvc создан' ;;
+                *) echo "Проверка бакета dvc: HTTP $status" >&2; exit 1 ;;
+              esac
+              s3 --fail --head --output /dev/null "$bucket"
+              echo 'HeadBucket dvc: HTTP 200'
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
