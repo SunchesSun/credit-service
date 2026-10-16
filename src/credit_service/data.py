@@ -13,7 +13,6 @@ import mlflow
 import pandas as pd
 import pandera.pandas as pa
 
-
 COLUMNS = {
     "Age": "age",
     "Sex": "sex",
