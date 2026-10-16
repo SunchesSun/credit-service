@@ -1,4 +1,12 @@
 [core]
-    remote = local
+    remote = laptop
 ['remote "local"']
     url = ../../dvc-storage
+['remote "laptop"']
+    url = s3://dvc
+    endpointurl = http://s3.localhost
+    region = us-east-1
+['remote "cluster"']
+    url = s3://dvc
+    endpointurl = http://rustfs.mlops:9000
+    region = us-east-1

@@ -9,10 +9,12 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_fastapi_instrumentator import metrics as http_metrics
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from credit_service import db, model_store
+from credit_service import db, metrics, model_store
 from credit_service.config import settings
 
 
@@ -45,6 +47,7 @@ async def lifespan(app: FastAPI):
     app.state.pipeline, app.state.meta, app.state.version = model_store.load_model()
 
     db.init()
+    metrics.initialize(app.state.version)
 
     try:
         yield
@@ -87,6 +90,8 @@ async def audit(request: Request, call_next):
     except Exception:
         logger.exception("Cannot persist prediction %s", request.state.request_id)
         response = JSONResponse({"detail": "Prediction log unavailable"}, status_code=503)
+    if response.status_code == 200 and request.state.prediction is not None:
+        metrics.observe_prediction(app.state.version, request.state.prediction)
     response.headers["X-Request-ID"] = request.state.request_id
     return response
 
@@ -124,3 +129,14 @@ def predict(x: Features, request: Request) -> Prediction:
                     request_id=request.state.request_id,
                     latency_ms=latency_ms
     )
+
+
+# Внешний middleware измеряет весь запрос
+Instrumentator(
+    should_group_status_codes=False,
+    should_ignore_untemplated=True,
+    excluded_handlers=["/metrics", "/health", "/ready"],
+).add(http_metrics.default(
+    latency_lowr_buckets=metrics.HTTP_LATENCY_BUCKETS,
+    latency_highr_buckets=metrics.HTTP_LATENCY_BUCKETS,
+)).instrument(app).expose(app, include_in_schema=False)

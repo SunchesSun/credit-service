@@ -1,0 +1,15 @@
+.git/
+.venv/
+.pytest_cache/
+.ruff_cache/
+**/__pycache__/
+**/*.py[cod]
+.env
+.env.*
+.dvc/cache/
+.dvc/tmp/
+.dvc/config.local
+datasets/*
+!datasets/*.dvc
+homeworks/
+docs/

@@ -572,13 +572,14 @@ wheels = [
 
 [[package]]
 name = "credit-service"
-version = "1.2.0"
+version = "1.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "dvc", extra = ["s3"] },
     { name = "fastapi" },
     { name = "implicit" },
     { name = "joblib" },
+    { name = "matplotlib" },
     { name = "mlflow-skinny" },
     { name = "pandas" },
     { name = "pandera" },
@@ -599,7 +600,6 @@ dependencies = [
 dev = [
     { name = "httpx" },
     { name = "locust" },
-    { name = "matplotlib" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -610,6 +610,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "implicit", specifier = ">=0.7.3" },
     { name = "joblib" },
+    { name = "matplotlib" },
     { name = "mlflow-skinny", specifier = ">=3.16,<4" },
     { name = "pandas" },
     { name = "pandera", specifier = ">=0.33.1" },
@@ -629,7 +630,6 @@ requires-dist = [
 dev = [
     { name = "httpx" },
     { name = "locust" },
-    { name = "matplotlib" },
     { name = "pytest" },
     { name = "ruff" },
 ]

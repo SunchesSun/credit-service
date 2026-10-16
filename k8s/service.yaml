@@ -2,10 +2,13 @@ apiVersion: v1
 kind: Service
 metadata:
   name: credit-service
+  labels:
+    app: credit
 spec:
   type: ClusterIP
   selector:
     app: credit
   ports:
-    - port: 80
-      targetPort: 8000
+    - name: http
+      port: 80
+      targetPort: http

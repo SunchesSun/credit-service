@@ -23,36 +23,18 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
+from credit_service.data import CATEGORICAL, COLUMNS, FEATURES, NUMERIC
+
 DATA_PATH = Path(os.getenv("DATA_PATH", "datasets/german_credit_data.csv"))
 MODEL_NAME = os.getenv("MODEL_NAME", "german-credit")
 EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT", "german-credit")
 C = float(os.getenv("C", "1.0"))
 BAD_CLASS_WEIGHT = float(os.getenv("BAD_CLASS_WEIGHT", "1.0"))
-# В исходном CSV bad встречается реже good (см. class_counts в metadata.json).
-# Обоснование запаса: REPORT.md, раздел 2.2.1; сырые замеры и правило расчёта
-# сохранены в docs/hw3/gate_stability/{scores.csv,summary.json}.
 # 0.24 = ceil(0.22350470416294532 * 100) / 100 + 0.01; это эмпирический запас.
 MIN_GAIN = float(os.getenv("GATE_MIN_GAIN", "0.24"))
 SEED = 42
 THRESHOLD = 0.5
 SKOPS_TRUSTED = ["numpy.dtype", "sklearn.compose._column_transformer._RemainderColsList"]
-
-# Соответствие заголовка CSV и контракта сервиса взято из notebooks/train.ipynb.
-COLUMNS = {
-    "Age": "age",
-    "Sex": "sex",
-    "Job": "job",
-    "Housing": "housing",
-    "Saving accounts": "saving_accounts",
-    "Checking account": "checking_account",
-    "Credit amount": "credit_amount",
-    "Duration": "duration",
-    "Purpose": "purpose",
-}
-FEATURES = list(COLUMNS.values())
-NUMERIC = ["age", "credit_amount", "duration"]
-CATEGORICAL = [name for name in FEATURES if name not in NUMERIC]
-
 
 def load_and_validate(path: Path) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
     data = pd.read_csv(path)

@@ -128,9 +128,17 @@ jobs:
 
       - name: сервис
         run: |
-          kubectl apply -f k8s/
+          kubectl apply -f k8s/configmap.yaml -f k8s/deployment.yaml \
+            -f k8s/service.yaml -f k8s/ingress.yaml -f k8s/hpa.yaml
           kubectl set image deploy/credit-service api="$IMAGE"
           kubectl rollout status deploy/credit-service --timeout=120s
+
+      - name: мониторинг и DAG
+        run: |
+          kubectl apply -f k8s/servicemonitor.yaml -f k8s/dashboard.yaml
+          kubectl create configmap airflow-dags -n mlops \
+            --from-file=dags/credit_retrain.py --dry-run=client -o yaml | kubectl apply -f -
+          kubectl exec -n mlops deploy/airflow -- airflow variables set credit_image "$IMAGE"
 
       - name: smoke
         run: |
@@ -167,6 +175,9 @@ jobs:
           kubectl exec deploy/postgres -- psql -U postgres -d credit \
             -Atc "SELECT count(*) FROM predictions WHERE request_id = '$request_id'::uuid AND model_version = '$model_version' AND status_code = 200" \
           | grep -qx 1
+
+          curl --fail --silent --show-error -H "$host" "$url/metrics" \
+            | grep -Fx "credit_model_info{model_version=\"$model_version\"} 1.0"
 
       - name: диагностика
         if: failure()
