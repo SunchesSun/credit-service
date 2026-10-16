@@ -133,9 +133,12 @@ jobs:
           kubectl set image deploy/credit-service api="$IMAGE"
           kubectl rollout status deploy/credit-service --timeout=120s
 
-      - name: мониторинг
+      - name: мониторинг и DAG
         run: |
           kubectl apply -f k8s/servicemonitor.yaml -f k8s/dashboard.yaml
+          kubectl create configmap airflow-dags -n mlops \
+            --from-file=dags/credit_retrain.py --dry-run=client -o yaml | kubectl apply -f -
+          kubectl exec -n mlops deploy/airflow -- airflow variables set credit_image "$IMAGE"
 
       - name: smoke
         run: |
