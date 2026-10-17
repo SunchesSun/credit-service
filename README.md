@@ -1,73 +1,128 @@
 # Credit service
 
-FastAPI-сервис кредитного скоринга на модели, обученной в
-[`notebooks/train.ipynb`](notebooks/train.ipynb). Артефакт содержит единый
-scikit-learn Pipeline с препроцессингом и моделью, а также паспорт модели.
+MLOps-проект кредитного скоринга. FastAPI принимает признаки заявки
+и возвращает вероятность класса bad, решение по порогу 0.5, версию модели
+и request_id. Каждый запрос предсказания записывается в PostgreSQL.
 
-Данные о выполнении задания 2 недели лежат в REPORT.md
+Модель — scikit-learn Pipeline: обработка пропусков, OneHotEncoder,
+StandardScaler и LogisticRegression. Данные German Credit Risk хранятся
+в DVC/S3, модели и результаты обучения — в MLflow. Airflow проверяет данные,
+обучает кандидата и перезапускает сервис при продвижении модели.
+Prometheus собирает метрики, Grafana показывает нагрузку и ответы модели.
+Статус выполнения задания и доказательства: [REPORT.md](REPORT.md).
 
-## Проверка
+## Quickstart
 
-Команды выполняются из корня проекта сверху вниз.
+Linux/WSL: нужны Docker с Buildx, uv, kind, kubectl, Helm 3 и curl.
+Порт 80 должен быть свободен; Python 3.11 устанавливается через uv.
 
-1. Установка зафиксированных зависимостей и тесты:
+~~~bash
+git clone https://github.com/SunchesSun/credit-service.git
+cd credit-service
+bash scripts/quickstart.sh
+~~~
 
-   ```bash
-   uv sync --frozen && uv run pytest
-   ```
+Скрипт устанавливает зависимости, проверяет локальные имена, поднимает
+платформу, получает ключи S3 из Kubernetes Secret и восстанавливает данные
+через DVC. Для пустого бакета скачивает исходный набор из Kaggle и проверяет
+MD5 по указателю перед публикацией в S3. Затем проверяет CSV, обучает
+отсутствующий champion, собирает образ и разворачивает API, мониторинг и DAG.
+В конце выводит ответы health/predict, метрику версии, список pod и время запуска.
 
-2. Сборка и проверка API с журналом предсказаний в PostgreSQL:
+Если локальные имена не настроены, скрипт попросит sudo для добавления
+записи в /etc/hosts. Изменённый вручную CSV не перезаписывается;
+существующие champion и Secret PostgreSQL сохраняются. Гейт 0.24 не меняется.
+Первый запуск требует доступа к реестрам образов и Kaggle.
 
-   ```bash
-   bash scripts/check-compose.sh
-   ```
+Повторный запуск — та же команда. Только пересобрать и обновить API
+на уже готовой платформе с существующим champion:
 
-3. Сборка образа, развёртывание в kind и запрос через port-forward:
+~~~bash
+bash scripts/deploy-local.sh
+~~~
 
-   ```bash
-   bash scripts/check-kind.sh
-   ```
+Состав платформы и диагностика: [platform/README.md](platform/README.md).
 
-## Отчёт
+## CI/CD: настройка
 
-### Тесты
+Для полного CI/CD нужны права на GitHub-репозиторий или свой форк.
 
-![Успешный запуск pytest](docs/pytest.png)
+1. В Settings → Secrets and variables → Actions создай DB_PASSWORD с паролем
+   текущей БД. Для новой установки скрипт использует postgres. Изменение
+   GitHub Secret само по себе не меняет пароль существующей роли PostgreSQL.
+2. В Settings → Actions → Runners → New self-hosted runner получи registration
+   token и выполни команду ниже. Скрипт запросит токен; для форка можно передать
+   его URL первым аргументом. Существующий gh-runner запускается повторно
+   при необходимости; сохранённая регистрация используется без нового токена.
 
-### Логи предсказаний в PostgreSQL
+~~~bash
+bash scripts/register-runner.sh
+~~~
 
-В таблице видны идентификатор и время запроса, версия модели, входные признаки,
-предсказание, задержка и HTTP-код ответа.
+3. После публикации кода в main выбери Actions → ci → Run workflow → main.
+   Выполнятся tests, build и deploy на runner с меткой kind. CI применит
+   Secret, БД, API, мониторинг, DAG и переменную credit_image, затем проверит
+   ответ через Ingress, запись PostgreSQL и метрику версии модели.
 
-![SELECT из таблицы predictions](docs/postgres.png)
+Обычный push в main запускает tests и build; deploy запускается по кнопке.
+Скрипты запуска не делают Git-коммитов и git push.
 
-### Kubernetes и predict
+## Интерфейсы и переобучение
 
-Deployment запущен в двух репликах. На скриншоте также показан ответ
-`/v1/predict`, полученный через port-forward.
+| Компонент | Адрес |
+| --- | --- |
+| API, Swagger | http://credit.localhost/docs |
+| MLflow | http://mlflow.localhost |
+| Airflow | http://airflow.localhost |
+| Grafana, дашборд | http://grafana.localhost/d/credit-service/credit-service |
+| RustFS, консоль S3 | http://s3-console.localhost |
+| S3 API с хоста / из кластера | http://s3.localhost / http://rustfs.mlops:9000 |
 
-![Два pod и ответ predict](docs/kind.png)
+Grafana: admin / admin. Airflow в этой конфигурации запускается
+с simple_auth_manager_all_admins=True. Ключи RustFS по умолчанию —
+dvcadmin / dvc-secret-123.
 
-### k9s
+В Airflow включи DAG credit_retrain и нажми Trigger, либо выполни:
 
-![Pod сервиса в k9s](docs/k9s.png)
+~~~bash
+kubectl exec -n mlops deploy/airflow -- airflow dags unpause credit_retrain
+kubectl exec -n mlops deploy/airflow -- airflow dags trigger credit_retrain
+~~~
 
-## Журнал проблем
-Особых проблем не было, все имеющиеся возникли в результате невнимательности и были быстро исправлены
+Цепочка: validate → train → promoted → rollout. Проверка и обучение выполняются
+в отдельных pod и скачивают CSV из S3. При promoted=false rollout пропускается.
+Расписание — ежедневно в 03:00 по Москве, без start_date; при создании DAG на паузе.
+Параметры ручного запуска c и bad_class_weight по умолчанию равны 1.
 
+Для заполнения дашборда:
 
-1. При запросе `localhost:8000` к Kubernetes-сервису curl возвращал
-   `Failed to connect`. `kubectl get service` показал тип `ClusterIP`, который
-   не публикует порт на хосте. Для проверки был запущен port-forward из порта
-   Service 80 на локальный порт 8000.
+~~~bash
+uv run python scripts/traffic.py --duration 300 --rps 5
+~~~
 
-3. При удалении и повторном создании kind-кластера ConfigMap, созданный вручную,
-   исчез. Проверка манифестов теперь не зависит от объектов, отсутствующих в
-   каталоге `k8s`.
+## Проверки и структура
 
-## Данные и артефакт
+~~~bash
+uv run --frozen ruff check .
+uv run --frozen pytest
+~~~
 
-Источник и контрольная сумма обучающего CSV записаны в
-[`artifact/metadata.json`](artifact/metadata.json). Инструкция по размещению
-исходного файла для повторного запуска ноутбука находится в
-[`datasets/README.md`](datasets/README.md).
+| Каталог / файл | Назначение |
+| --- | --- |
+| src/credit_service | API, обучение, Pandera, метрики, запись в БД |
+| datasets, .dvc | Указатель данных и настройки хранилища |
+| artifact | Локальная модель для запуска без реестра и тестов |
+| platform | Платформа Kubernetes и скрипт её установки |
+| k8s | PostgreSQL, API, HPA, Ingress и мониторинг |
+| dags/credit_retrain.py | Конвейер Airflow |
+| scripts/quickstart.sh | Полный локальный запуск |
+| scripts/prepare.py | DVC, проверка CSV и первый champion |
+| scripts/deploy-local.sh | Сборка, локальный деплой и проверка ответа |
+| scripts/register-runner.sh | Первоначальная регистрация GitHub runner |
+| scripts/traffic.py | Трафик через Ingress |
+| .github/workflows/ci.yml | Тесты, сборка, деплой и smoke |
+| docs/hw4 | Скриншоты работы 4 |
+
+RustFS, MLflow и Airflow используют PVC внутри kind. Удаление кластера удаляет
+его локальные данные; у PostgreSQL в текущем манифесте отдельного PVC нет.
+Полный проход этого Quickstart в свежем клоне с новым кластером ещё не измерен.

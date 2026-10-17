@@ -1,163 +1,258 @@
-# Отчёт по домашней работе 3
+# проект Credit service
 
-| Пункт | Доказательства |
-|---|---|
-| 2.1 Платформа | [pod и Ingress](docs/hw3/kind-mlpro3_pods.png), [MLflow Model training](docs/hw3/mlflow_model_traning.png) |
-| 2.2 Обучение и гейт | [версии и алиасы](docs/hw3/mlflow_model_registry_aliases.png), [решения гейта](docs/hw3/train_runs.txt) |
-| 2.3 Откат | [`/health` до](docs/hw3/health_before_rollback.json) и [после](docs/hw3/health_after_rollback.json) |
-| 2.4 Деплой | [зелёный прогон](https://github.com/SunchesSun/credit-service/actions/runs/37229900482), [runner](docs/hw3/github_actions_runner.png) |
-| 2.5 DVC | [указатель данных](datasets/german_credit_data.csv.dvc), [проверки](docs/hw3/dvc_verification.txt), [два запуска MLflow](docs/hw3/mlflow_dvc_data_versions.png) |
-| 2.6 HPA | [рост и снижение реплик](docs/hw3/hpa_replicas.png), [события HPA](docs/hw3/hpa_describe.txt), [статистика Locust](docs/hw3/locust_10_stats.csv) |
-| 2.7 Диагностические прогоны | Отсутствующий алиас: [красный](https://github.com/SunchesSun/credit-service/actions/runs/38794024372) → [зелёный после исправления](https://github.com/SunchesSun/credit-service/actions/runs/38795908887); неверный кластер: [красный, попытка 2](https://github.com/SunchesSun/credit-service/actions/runs/38797613323/attempts/2); [зелёный после исправления кластера](https://github.com/SunchesSun/credit-service/actions/runs/38801045264); неверный host: [красный, попытка 2](https://github.com/SunchesSun/credit-service/actions/runs/38803152319/attempts/2), зелёный после исправления пока не зафиксирован |
+Сервис кредитного скоринга: FastAPI, LogisticRegression, PostgreSQL,
+DVC/S3, MLflow, Airflow, Prometheus и Grafana.
+Инструкция запуска: [README.md](README.md).
 
-## 2.1. Кластер, MLflow и Ingress
+## Схема и хранение
 
-Кластер `kind-mlpro3` создан по [`platform/kind-config.yaml`](platform/kind-config.yaml): порт 80 на `127.0.0.1` проброшен на NodePort 30080 Traefik. Через Ingress доступны `mlflow.localhost` и `credit.localhost`. В [`platform/mlflow.yaml`](platform/mlflow.yaml) настроены `--allowed-hosts=mlflow.mlops*,mlflow.localhost*,localhost*,127.0.0.1*`, `--cors-allowed-origins=http://mlflow.localhost` и `MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false`.
+~~~mermaid
+flowchart LR
+    User[Клиент] --> Ingress[Traefik Ingress]
+    Ingress --> API[FastAPI]
+    API --> DB[(PostgreSQL: журнал)]
+    API --> MLflow[MLflow: champion]
+    Airflow[Airflow DAG] --> Validate[Pod validate]
+    Validate --> Train[Pod train]
+    Train --> Gate{promoted}
+    Gate -->|true| Rollout[Перезапуск API]
+    Validate --> S3[(RustFS: DVC)]
+    Train --> S3
+    Validate --> MLflow
+    Train --> MLflow
+    Prometheus[Prometheus] -->|ServiceMonitor: /metrics| API
+    Grafana[Grafana] --> Prometheus
+    CI[GitHub Actions] --> Registry[GHCR: образ по SHA]
+    CI --> API
+    CI --> Airflow
+~~~
 
-[Скрин pod и Ingress](docs/hw3/kind-mlpro3_pods.png) показывает работающие компоненты кластера и маршруты; [скрин MLflow в режиме Model training](docs/hw3/mlflow_model_traning.png) показывает запуск обучения. Повторная проверка `kubectl --context kind-mlpro3 get pods,ingress -A` показала две готовые реплики API, PostgreSQL, MLflow, Traefik и metrics-server; Ingress `credit.localhost` и `mlflow.localhost` присутствуют.
+| Что | Где хранится и как найти версию |
+| --- | --- |
+| Код и настройки | GitHub; Git SHA, Dockerfile и uv.lock |
+| Данные | Бакет dvc в RustFS; MD5 в datasets/german_credit_data.csv.dvc и параметре MLflow data_md5 |
+| Модели и метрики обучения | MLflow, PVC mlflow-data; имя german-credit, номер версии, run_id и Aliases |
+| Docker-образы | GHCR, тег sha-<Git SHA>; при локальной проверке — Docker и kind |
+| Журнал запросов | PostgreSQL, таблица predictions; поиск по request_id |
+| История задач | Airflow; dag_id, run_id и логи задач |
 
-## 2.2. Обучение и гейт MLflow
+Хранилища привязаны к локальному kind: удаление кластера удаляет его PVC.
+У PostgreSQL в текущем манифесте нет отдельного PVC.
 
-В исходных данных класс `bad` встречается реже `good` (300 и 700 строк соответственно), поэтому для гейта выбрана PR-AUC по вероятности `bad` (`average_precision_score`). В исторических запусках ниже запас `GATE_MIN_GAIN=0.01` требовал прироста PR-AUC больше 0.01 относительно текущего `champion`; равный результат, как у версии 2, не менял алиас. Во всех трёх запусках использовались одинаковые данные и разбиение (`random_state=42`), а менялись сила регуляризации `C` и вес класса `bad`. После обратной связи запас пересмотрен по эксперименту в разделе 2.2.1; исторические решения в таблице сохранены.
+## 1. Платформа одной командой
 
-| Версия | Run ID | `C` | Вес `bad` | PR-AUC | Решение гейта | `champion` после запуска |
-|---|---|---:|---:|---:|---|---|
-| 3 | `59baab5362b948b4859d6c2b31b0cf10` | 0.007 | 1 | 0.628601 | Принята: предыдущая версия 1 имела 0.617173 | 3 |
-| 4 | `29f04cb543314db1a940b7486447d604` | 0.000001 | 1 | 0.579212 | Отклонена; версия 4 получила только `challenger` | 3 |
-| 5 | `2543660b024f407b9125b5aa8d92ca29` | 0.01 | 2 | 0.644035 | Принята: прирост относительно версии 3 равен 0.015435 | 5 |
+Добавлены platform/up.sh, RustFS, создание бакета dvc и LF-настройки
+.gitattributes. Скрипт создаёт или использует кластер mlpro3, устанавливает
+Traefik, metrics-server, мониторинг, MLflow и Airflow, затем проверяет Ingress.
+Повторный запуск сохраняет существующий S3 Secret и бакет.
 
-Каждый запуск сохранил `metadata.json` с признаками и порогом, `confusion_matrix.json` и собственный артефакт `precision_recall_curve.png` через `mlflow.log_figure`. Параметр `data_md5` во всех трёх запусках равен `3086216ff1ff32f7626554e730cccc91`.
-Копия [PR-кривой версии 5](docs/hw3/precision_recall_curve.png) сохранена вместе с доказательствами задания.
-Вывод команд с решениями гейта сохранён в [`docs/hw3/train_runs.txt`](docs/hw3/train_runs.txt).
+Quickstart сокращён до scripts/quickstart.sh. Он вызывает платформу,
+scripts/prepare.py (локальные ключи из Secret, DVC, проверка CSV и первый
+champion) и scripts/deploy-local.sh (образ, API, мониторинг, DAG и smoke).
+Регистрация runner вынесена в scripts/register-runner.sh и требует
+registration token из GitHub; коммиты и git push скрипты не выполняют.
+Полный quickstart.sh проверен на существующем кластере: код выхода 0,
+444 секунды, обе реплики API Ready, health/predict и метрика версии доступны.
+Существующий champion v1 сохранён, DVC-указатель не изменился; это проверка
+повторного запуска, а не свежего клона и нового кластера.
+Воспроизведение CSV из Kaggle для пустого S3 сохраняет индекс, NA и LF,
+а перед записью проверяет MD5 источника и соответствие текущему указателю.
 
-### 2.2.1. Обоснование минимального прироста
+Платформа была поднята после устранения сетевых ошибок загрузки образов.
+Последний завершающий запуск up.sh занял 47 секунд; это не время всей установки.
+Полный запуск проекта с нуля по итоговому README не измерен и не заявляется
+проверенным. Закреплённые версии и источники настроек: [platform/README.md](platform/README.md).
 
-Скрипт [`credit_service.evaluate_gate`](src/credit_service/evaluate_gate.py) проверяет чувствительность PR-AUC к разбиению без регистрации моделей и изменения алиасов MLflow. На каждой из двух версий CSV выполнено 50 стратифицированных разбиений 80/20 с `random_state=0..49`. Для каждого разбиения заново обучены две фиксированные конфигурации: v3 (`C=0.007`, вес bad 1) и v5 (`C=0.01`, вес bad 2). Seed модели оставлен 42; меняется seed разбиения. В каждой паре v3 и v5 обучаются и оцениваются на одинаковых строках. Итого выполнено 200 обучений.
+## 2. Метрики и дашборд
 
-Исходные данные прочитаны из DVC-кэша без переключения рабочего CSV. В [`scores.csv`](docs/hw3/gate_stability/scores.csv) сохранены все замеры с MD5 данных, параметрами и размерами выборок; [`summary.json`](docs/hw3/gate_stability/summary.json) содержит сводку, версии Python/scikit-learn и правило расчёта. MD5 исходных 1000 строк — `3086216ff1ff32f7626554e730cccc91`, текущих 901 строки — `75716716a440972dfc0fed80bb7791cc`.
+Подключены prometheus-fastapi-instrumentator и собственные метрики:
+credit_model_info, credit_model_score и credit_model_predictions_total.
+ServiceMonitor обращается к именованному порту http. Дашборд поставляется
+ConfigMap с grafana_dashboard: "1"; генератор отправляет реальные признаки
+из CSV через Ingress.
 
-| Данные | Размер теста / bad | PR-AUC v3, min–max | Среднее v3 | Стандартное отклонение v3 | Диапазон v3 | Средний парный прирост v5 − v3 | v5 лучше v3 |
-|---|---:|---|---:|---:|---:|---:|---:|
-| Исходные, 1000 строк | 200 / 60 | 0.459854–0.683359 | 0.562737 | 0.057688 | 0.223505 | 0.010693 | 45 из 50 |
-| Текущие, 901 строка | 181 / 58 | 0.432750–0.638730 | 0.557487 | 0.054293 | 0.205980 | 0.008272 | 39 из 50 |
+HTTP-бакеты в секундах: 0.01, 0.025, 0.04, 0.05, 0.075, 0.1, 0.15,
+0.2, 0.3, 0.5, 0.75, 1, 2. Основание — сохранённые
+[замеры Locust](docs/hw3/locust_10_stats.csv): в прогонах на 1/5/10 пользователей
+p50 составляла 44/44/50 мс, p95 — 88/110/160 мс, максимумы — 517–685 мс.
+Границы уплотнены вокруг этих значений; старые замеры включают сеть и Ingress,
+а новая гистограмма измеряет время внутри приложения, включая аудит в БД.
 
-При seed 42 на исходном CSV воспроизведены PR-AUC v3 `0.6286006827322147` и v5 `0.6440352890308076`, совпадающие с историческими значениями. Парный прирост v5 относительно v3 на исходных данных менялся от `−0.020729` до `0.036815`, поэтому превосходство не сохранялось на всех разбиениях. Значения разных версий данных между собой как качество моделей не сравниваются.
+Score — вероятность bad в диапазоне [0, 1]; бакеты выбраны с шагом 0.1.
+На дашборде они объединены в пять интервалов. Это предсказания, не истинные
+классы. Метки не содержат request_id или значений признаков.
+Метрики модели учитывают успешные ответы после записи аудита.
 
-Порог выбран по заранее заданной для этого эксперимента консервативной эвристике: взять максимальный диапазон PR-AUC фиксированной конфигурации v3 среди двух версий данных, округлить вверх до сотых и добавить ещё 0.01. Получается `ceil(0.22350470416294532 × 100) / 100 + 0.01 = 0.24`. Теперь значение по умолчанию в `train.py` — `GATE_MIN_GAIN=0.24`; переопределение переменной окружения сохраняется. Старый порог 0.01 меньше измеренного разброса и не обоснован этими данными.
+В Deployment добавлен preStop со sleep 5 — начальная политика ожидания
+обновления маршрутизации, не измеренный оптимум. Перезапуск двух реплик
+под трафиком дал 896 запросов за 180 секунд и 0 ошибок; версия модели
+при этом оставалась v1. Контрольного прогона без preStop не было.
 
-Это строгий эмпирический запас, а не проверка статистической значимости и не гарантия для будущих разбиений. Повторные holdout-выборки пересекаются; при смене seed меняются и обучающие, и тестовые строки. Порог существенно затрудняет продвижение: при прежней PR-AUC champion `0.628601` требуется результат выше примерно `0.868601`. При новом пороге исторический прирост v5 над v3 `0.015435` не привёл бы к продвижению; даже прирост v3 над v1 `0.011428` его не проходит. Старые запуски не переигрывались, алиасы не менялись. Новый порог ещё не проверен отдельным обучением через MLflow. Он также не делает корректным прямое сравнение метрик моделей, оценённых на разных версиях данных.
+Дашборд под трафиком: RPS, p50/p95, распределение score, доля bad и версии по pod.
 
-Воспроизведение при наличии исходного объекта в локальном DVC-кэше и текущего CSV:
+![Grafana: метрики сервиса и модели под трафиком](docs/hw4/dashboard.png)
 
-```bash
-uv run python -m credit_service.evaluate_gate \
-  --data .dvc/cache/files/md5/30/86216ff1ff32f7626554e730cccc91 \
-         datasets/german_credit_data.csv
-```
+## 3. Данные в DVC и S3
 
-## 2.3. Откат модели
+Настроены два remote на один бакет: laptop — http://s3.localhost,
+cluster — http://rustfs.mlops:9000. Ключи хоста находятся в игнорируемом
+.dvc/config.local; pod получают AWS-переменные из mlops/s3-credentials.
 
-Сервис загружает модель по алиасу `german-credit@champion` при запуске; без `MODEL_NAME` остаётся загрузка локального файла для CI. После обучения версии 5 pod были перезапущены, и [`/health` до отката](docs/hw3/health_before_rollback.json) показывал `german-credit-v5`. Затем в MLflow Model registry алиас `champion` был перенесён с версии 5 на прежний champion, версию 3. После `kubectl rollout restart deploy/credit-service` [`/health` после отката](docs/hw3/health_after_rollback.json) показывал `german-credit-v3`; обе реплики стали Ready. Образ Deployment остался `ghcr.io/sunchessun/credit-service:sha-87abc5e6ced57069822c47fb0865436d1cf7c5ed`, пересборки не было.
+В образ копируются .dvc/config и указатель CSV, включён core.no_scm=true.
+Сам CSV, кеш DVC и локальные ключи исключены из Docker-контекста.
+Проверены восстановление с пустым кешем и DVC pull внутри Kubernetes.
 
-После клика в UI первый ответ `/health` со старой версией появился **примерно через 9–10 секунд**. Наблюдение проверяло алиас каждые 0,5 секунды; измеренное время от обнаружения смены алиаса до ответа составило 8,95 секунды. Поэтому время от клика указано приблизительно: задержка до обнаружения алиаса отдельно не измерялась. Полный rollout занял 20,3 секунды. После опыта `champion` указывает на версию 3, `challenger` — на версию 5.
-Версии модели и колонка алиасов видны на [скрине Model registry](docs/hw3/mlflow_model_registry_aliases.png).
+| Версия CSV | Строк | MD5 |
+| --- | ---: | --- |
+| Исходная | 1000 | 3086216ff1ff32f7626554e730cccc91 |
+| Текущая хорошая | 901 | 75716716a440972dfc0fed80bb7791cc |
+| Тестовая плохая | 901 | d3776a7662b5423c2152a84da410493d |
 
-## 2.4. CI/CD и smoke-проверка
+Все эти версии загружены в S3. В текущей хорошей версии удалены строки,
+у которых одновременно отсутствуют Saving accounts и Checking account.
+Вывод проверки образа credit-service:hw4-dvc:
 
-Job `deploy` в `.github/workflows/ci.yml` выполняется на runner с метками `self-hosted` и `kind`. Контейнер `gh-runner` запущен в Docker-сети `kind`; его зарегистрированное имя — `mlpro3-kind`. Шаг создания `credit-secrets` применяет результат `kubectl create secret --dry-run=client -o yaml` через `kubectl apply`, поэтому повторный деплой обновляет Secret.
+~~~text
+$ docker run --rm --entrypoint ls credit-service:hw4-dvc datasets
+german_credit_data.csv.dvc
+~~~
 
-Smoke-шаг обращается к сервису через Traefik Ingress (`Host: credit.localhost`, порт 30080 узла `mlpro3-control-plane`). Он проверяет, что `/health` сообщает о загрузке `models:/german-credit@champion`, отправляет пример из `good.json` в `/v1/predict`, проверяет вероятность, решение по порогу 0.5 и версию модели, затем ищет в PostgreSQL ровно одну строку с тем же `request_id`, версией и кодом 200.
+Версии данных в бакете DVC на момент проверки:
 
-После обратной связи в smoke добавлены ожидания `score < 0.5` и `is_bad_risk is False` для `good.json`. Теперь согласованный ответ с высоким риском (например, `score=0.9`, `is_bad_risk=true`) не проходит проверку.
+![RustFS: бакет dvc и объекты версий данных](docs/hw4/s3-bucket.png)
 
-Этот smoke-скрипт извлечён из workflow и успешно выполнен внутри контейнера `gh-runner` на работающем кластере: `/health` показал `german-credit-v3`, ответ предсказания содержал `score=0.1887866461272916`, `is_bad_risk=false`, `model_version=german-credit-v3`, а проверка строки в PostgreSQL завершилась с кодом 0.
+## 4. Проверка данных
 
-После публикации изменений [workflow run #33](https://github.com/SunchesSun/credit-service/actions/runs/37229900482) для коммита `15afa42e8018e737b8389cafa2919543a84db11e` на `main` завершился успешно: jobs `tests`, `build` и [`deploy`](https://github.com/SunchesSun/credit-service/actions/runs/37229900482/job/111517592279) зелёные. В `deploy` использовался runner `mlpro3-kind`, а шаг `smoke` завершился успешно. В кластере после этого запущен образ с тем же SHA, обе реплики API доступны; дополнительный запрос через Ingress вернул `german-credit-v3`, и PostgreSQL содержал ровно одну строку с его `request_id` и кодом 200.
+Добавлены две Pandera-схемы в src/credit_service/data.py.
+Схема строк проверяет типы, категории, уникальность record_id, если он есть,
+и диапазоны: возраст 19–75, сумма 250–18424, срок 4–72, job 0–3.
+Границы и категории взяты из обеих версий CSV и
+[паспорта исходной модели](artifact/metadata.json); это ограничения
+учебной выгрузки, а не универсальные правила кредитования.
 
-По подтверждению владельца репозитория в Settings → Actions → General включено `Require approval for all external contributors`.
-На [скриншоте Settings → Actions → Runners](docs/hw3/github_actions_runner.png) видны runner `mlpro3-kind`, метка `kind` и статус `Idle` (runner онлайн и ожидает задания).
+Схема выгрузки требует минимум 800 строк и долю bad в [0.25, 0.35].
+800 — выбранный допуск потери не более 20% от исходных 1000 записей;
+коридор класса — исходные 30% ±5 процентных пунктов, текущие 32.30% проходят.
+Это эмпирические допуски, не доверительные интервалы.
 
-## 2.5. Версии данных в DVC
+При нарушении создаётся MLflow run с valid=false, сохраняется
+failure_cases.csv, CLI возвращает 1. Тесты используют синтетические данные:
+проверены хорошие строки, ошибки значений и недостаточный объём.
+Последняя локальная проверка: Ruff без ошибок, pytest — 45 passed / 2 skipped
+без DATABASE_URL; проверки с PostgreSQL выполняются в CI.
 
-Исходный `datasets/german_credit_data.csv` перенесён из Git в DVC в коммите `9030a294334cb3a642831491b227b8f3630d3562`. Репозиторий хранит [`datasets/german_credit_data.csv.dvc`](datasets/german_credit_data.csv.dvc) с MD5 и размером файла, а сам CSV исключён из Git через `datasets/.gitignore`. Локальный remote DVC — `../dvc-storage` относительно корня проекта; в `.dvc/config` он записан как `../../dvc-storage`. Зависимость DVC уже была в `pyproject.toml`, поэтому добавлять её повторно не потребовалось.
+Первоначальная проверка некорректных данных: запуск завершился ошибкой,
+тег valid=false.
 
-В коммите `6e15c46a24e41a962d604e6c6873e3bfb449081a` создана вторая версия: удалены 99 строк, в которых одновременно отсутствовали `Saving accounts` и `Checking account`. В ней 901 строка вместо 1000. Для обеих версий `dvc push` вывел `1 file pushed`; `dvc diff HEAD~1` показал `Modified: datasets/german_credit_data.csv`. После переключения указателя и `dvc checkout` восстановились сначала исходные 1000 строк с MD5 `3086216ff1ff32f7626554e730cccc91`, затем 901 строка с MD5 `75716716a440972dfc0fed80bb7791cc`. В отдельном чистом клоне `dvc pull` вывел `1 file fetched and 1 file added` и восстановил текущий CSV с тем же MD5. [Вывод проверок](docs/hw3/dvc_verification.txt).
+![MLflow: неуспешная проверка Pandera](docs/hw4/pandera-validation-failed.png)
 
-| Версия модели в MLflow | Run ID | Строк данных | `data_md5` | PR-AUC |
-|---|---|---:|---|---:|
-| 6 | `29418906d9394f0f8e832f3b5dbc7fba` | 1000 | `3086216ff1ff32f7626554e730cccc91` | 0.617173 |
-| 7 | `512a720820a3424393a614992ada0c3d` | 901 | `75716716a440972dfc0fed80bb7791cc` | 0.610738 |
+Проверка плохой выгрузки из Airflow: 901 нарушение, MD5 тестовой версии
+и valid=false. Здесь показан Overview запуска, а не содержимое артефакта CSV.
 
-[Скрин сравнения двух запусков MLflow](docs/hw3/mlflow_dvc_data_versions.png) показывает оба Run ID и разные `data_md5`.
+![MLflow: результат проверки плохой выгрузки из DAG](docs/hw4/pandera-bad-data-artifact.png)
 
-Оба запуска не прошли гейт относительно `champion` версии 3, поэтому работающий сервис продолжает использовать прежнюю модель. После переноса CSV тесты не требуют полного датасета (`25 passed`, `2 skipped`), Ruff также прошёл. Dockerfile копирует `src/` и `artifact/`, а CSV не копирует.
+## 5. Airflow и проверенные сценарии
 
-## 2.6. HPA
+DAG credit_retrain: validate → train → promoted → rollout.
+Первые две задачи работают в отдельных pod из образа сервиса, каждая делает
+dvc pull -r cluster. Train передаёт JSON через XCom; ShortCircuitOperator
+разрешает rollout только при promoted=true. Rollout перезапускает
+default/credit-service и ждёт готовности обновлённых реплик.
 
-Metrics-server установлен в `kube-system` чартом версии 3.14.0 с [`platform/metrics-server-values.yaml`](platform/metrics-server-values.yaml). До установки `kubectl top nodes` отвечал `Metrics API not available`; после установки он и `kubectl top pods` показывают цифры. Для kind потребовался `--kubelet-insecure-tls`. При первом запуске pod metrics-server получил `ImagePullBackOff`: узел не смог подключиться к IPv6-адресу `registry.k8s.io`. После `docker pull` на хосте и `kind load docker-image` pod запустился, а Helm завершился успешно.
+Расписание — ежедневно в 03:00 по Москве через CronTriggerTimetable,
+без start_date. Новый DAG на паузе, одновременно разрешён один запуск.
+CI публикует ConfigMap airflow-dags и переменную credit_image.
 
-[`k8s/hpa.yaml`](k8s/hpa.yaml) управляет `credit-service` по CPU: цель 60% от `requests.cpu`, минимум 2 и максимум 6 реплик. Нагрузка из [`locustfile.py`](locustfile.py) посылала `good.json` через Ingress `http://credit.localhost`. По выборке `kubectl top pods` CPU в таблице — медиана по pod после первой минуты каждого прогона; все три прогона имели 0 ошибок.
+| Сценарий | Выполненные действия и результат |
+| --- | --- |
+| Отказ гейта | hw4-gate-rejected: validate/train/promoted успешны, rollout skipped. V2 с PR-AUC 0.6107 получила challenger; champion v1 с 0.6242 сохранился, UID pod не изменились |
+| Плохая выгрузка | Сумма кредита умножена на 1000 с сохранением типов и числа строк; dvc push выполнен до публикации указателя. Коммит c1ff679, деплой, запуск hw4-bad-data-c1ff679: validate failed, остальные upstream_failed. MLflow valid=false, 901 нарушение; API продолжил отвечать моделью v1 |
+| Восстановление | Хороший указатель возвращён коммитом a9b4390 и задеплоен. hw4-data-restored: validate/train/promoted успешны, rollout skipped; зарегистрирована v4, champion остался v1 |
+| Успешное продвижение | Не выполнено; нет подтверждения смены версии через Airflow под трафиком |
 
-| Пользователи | Длительность | Запросы | Реплики во время прогона | p95 | CPU на pod, медиана |
-|---:|---:|---:|---|---:|---:|
-| 1 | 2 мин | 347 | 2 | 88 мс | 22,5m |
-| 5 | 3 мин | 2538 | 2 → 4 | 110 мс | 52,5m |
-| 10 | 2 мин | 3235 | 2 → 4 → 6 | 160 мс | 70m |
+Отказ гейта: первые три задачи успешны, rollout пропущен.
 
-Вывод [наблюдения HPA](docs/hw3/hpa_watch.txt), [периодические замеры CPU и памяти](docs/hw3/hpa_samples.csv), [график числа реплик](docs/hw3/hpa_replicas.png) и CSV статистики Locust для [1](docs/hw3/locust_1_stats.csv), [5](docs/hw3/locust_5_stats.csv) и [10](docs/hw3/locust_10_stats.csv) пользователей сохранены. В первом прогоне рост до 4 реплик наблюдался через примерно 51 секунду, до 6 — через примерно 72 секунды. После остановки 10 пользователей снижение до 2 произошло примерно через 5 минут 36 секунд: HPA удерживал прежние рекомендации в окне стабилизации. [Вывод `kubectl describe hpa`](docs/hw3/hpa_describe.txt) содержит события `SuccessfulRescale` для увеличения и уменьшения числа pod.
+![Airflow: hw4-gate-rejected](docs/hw4/airflow-gate-rejected.png)
 
-До замера ресурсы контейнера были `requests.cpu=100m`, `requests.memory=256Mi`, лимиты `1 CPU` и `512Mi`. Максимальная наблюдавшаяся память pod во всех прогонах — 200Mi. Поэтому CPU request оставлен 100m, а memory request установлен в 272Mi: это около трети запаса над измеренным максимумом. Лимиты остались прежними. Изменение применено к работающему Deployment без смены образа; rollout завершился успешно, обе реплики Ready, `/health` возвращает `german-credit-v3`. Сразу после замены pod HPA временно показывал `<unknown>`, затем снова получил метрики и показал 1%/60%.
+Состояние реестра после этого сценария: v1 — champion, v2 — challenger.
 
-## 2.7. Диагностические прогоны
+![MLflow Model registry: версии и Aliases на момент проверки](docs/hw4/model-registry-aliases.png)
 
-Исходный [зелёный прогон](https://github.com/SunchesSun/credit-service/actions/runs/38784981100) на коммите `069636b0cba517b3c6e721781ef29e79419263c4` подтвердил успешные `tests`, `build`, `deploy` и шаг `smoke` после усиления проверки ответа и переноса Ingress в `k8s/`.
+Плохая выгрузка: validate завершился ошибкой, следующие задачи не выполнялись.
 
-В коммите `e58f98068532b556245628fac5ab33cf39ae8917` параметр `MODEL_ALIAS` заменён с `champion` на `prod`. В [ручном прогоне](https://github.com/SunchesSun/credit-service/actions/runs/38794024372) `tests` и `build` завершились успешно, а [deploy](https://github.com/SunchesSun/credit-service/actions/runs/38794024372/job/116626134231) упал на шаге `сервис`; `smoke` был пропущен, шаг диагностики выполнен. После прогона новый pod `credit-service-75868df7c-wx6wr` находился в `CrashLoopBackOff`, а его лог содержал `mlflow.exceptions.RestException: INVALID_PARAMETER_VALUE: Registered model alias prod not found.` и `Application startup failed. Exiting.`. Ссылка на [deploy и шаг диагностики](https://github.com/SunchesSun/credit-service/actions/runs/38794024372/job/116626134231#logs). Две старые реплики при этом оставались Ready.
+![Airflow: hw4-bad-data-c1ff679](docs/hw4/airflow-bad-data.png)
 
-В исправляющем коммите `3209bb31c1c7907ed394eee981d082e5fdbe6790` возвращён `MODEL_ALIAS: champion`. [Ручной прогон после исправления](https://github.com/SunchesSun/credit-service/actions/runs/38795908887) завершился успешно. Первый цикл «поломка → исправление» закрыт.
+После восстановления данных проверка и обучение снова успешны;
+rollout пропущен по решению гейта.
 
-В коммите `fea34a15b42bd592c6e763c58d6cb79479ba77c7` задан `KIND_CLUSTER: mlpro3-missing`. https://github.com/SunchesSun/credit-service/actions/runs/38797613323/attempts/2 `tests` и `build` завершились успешно, а [deploy](https://github.com/SunchesSun/credit-service/actions/runs/38797613323/job/116640626073#logs) упал на шаге `kind, kubectl и доступ к кластеру` с кодом 1. Шаги загрузки образа в кластер, применения манифестов и smoke были пропущены. В исправляющем коммите `197038e8f23937f9ec240d593440ed2a8b60b9ef` возвращён `KIND_CLUSTER: mlpro3`. [Ручной прогон после исправления](https://github.com/SunchesSun/credit-service/actions/runs/38801045264) завершился успешно. Второй цикл «поломка → исправление» закрыт.
+![Airflow: hw4-data-restored](docs/hw4/airflow-data-restored.png)
 
-В коммите `c7e5a5261f95681587a1a865b8c533c05fa57ac5` host в `k8s/ingress.yaml` заменён на `credit-wrong.localhost`, а smoke сохранил `Host: credit.localhost`. (https://github.com/SunchesSun/credit-service/actions/runs/38803152319/attempts/2) [deploy](https://github.com/SunchesSun/credit-service/actions/runs/38803152319/job/116659993948#logs) завершился ошибкой на шаге `smoke`. Дополнительная локальная проверка после прогона через `mlpro3-control-plane:30080` показала для `/health` HTTP 404 с `Host: credit.localhost` и HTTP 200 с `Host: credit-wrong.localhost`. Последующий [отдельный запуск](https://github.com/SunchesSun/credit-service/actions/runs/38804455155) остановился раньше, на входе в GHCR, и не используется как подтверждение ошибки маршрута. В локальном манифесте восстановлен host `credit.localhost`;
+Гейт сохранён: PR-AUC кандидата должна превысить champion больше чем на 0.24.
+Основание — [эксперимент чувствительности к разбиению](docs/hw3/gate_stability/summary.json):
+максимальный наблюдавшийся диапазон PR-AUC базовой конфигурации 0.2235047,
+округление вверх до сотых и запас 0.01 дают 0.24.
+В сохранённых экспериментах конфигурации v3 и v5 означают соответственно
+C=0.007 / вес bad=1 и C=0.01 / вес bad=2, а не номера текущего реестра.
+Это строгая эвристика по разбросу одной модели, не тест значимости парной
+разности; при champion 0.6242 нужен результат выше 0.8642.
+Порог оставлен по решению пользователя. Восстановление сделано обычным
+коммитом, а не командой git revert, требуемой заданием.
+
+## 6. CI/CD
+
+Tests выполняет Ruff и pytest с PostgreSQL; build публикует образ в GHCR
+по SHA коммита. Ручной deploy работает на self-hosted runner mlpro3-kind:
+загружает образ в kind, применяет Secret, БД и API, мониторинг и DAG.
+Smoke через Ingress проверяет champion из реестра, осмысленный ответ good.json,
+строку predictions по request_id и credit_model_info с версией из health.
+
+[Полный зелёный запуск для c1ff679](https://github.com/SunchesSun/credit-service/actions/runs/38985932015)
+подтверждает tests, build, deploy, шаг «мониторинг и DAG» и smoke.
+После восстановления данных в кластере проверен образ по SHA a9b4390.
+
+## Пункт задания → доказательство
+
+| Требование | Доказательство / ограничение |
+| --- | --- |
+| Платформа и Quickstart | [Команды](README.md#quickstart), [up.sh](platform/up.sh); полного замера с нуля нет |
+| Метрики и дашборд под трафиком | [Скрин Grafana](docs/hw4/dashboard.png), [ServiceMonitor](k8s/servicemonitor.yaml), [дашборд](k8s/dashboard.yaml) |
+| S3 и данные вне образа | [Бакет](docs/hw4/s3-bucket.png), [.dvc/config](.dvc/config), [Dockerfile](Dockerfile); вывод ls выше |
+| Pandera и тесты CI | [Тесты](tests/test_data.py), [зелёный CI](https://github.com/SunchesSun/credit-service/actions/runs/38985932015) |
+| Ошибки в MLflow | [Run](http://mlflow.localhost/#/experiments/1/runs/e921a6ded4ff44178e1411c2cb4e2c74), [скрин Overview](docs/hw4/pandera-bad-data-artifact.png); открытый CSV на этом скрине не показан |
+| DAG: отказ гейта | [Граф](docs/hw4/airflow-gate-rejected.png), [Aliases v1/v2 на момент проверки](docs/hw4/model-registry-aliases.png) |
+| DAG: плохие данные | [Граф](docs/hw4/airflow-bad-data.png), [коммит](https://github.com/SunchesSun/credit-service/commit/c1ff679b091a5f3387a1bb0bb76e99334f6943c2) |
+| Восстановление | [Скрин](docs/hw4/airflow-data-restored.png), [validate](http://mlflow.localhost/#/experiments/1/runs/59c9e80666694111a50dd8df402ec70d), [train](http://mlflow.localhost/#/experiments/1/runs/cdb4e6c35eb04ab7b89069f0933c9696); обычный коммит a9b4390 вместо git revert |
+| Продвижение и смена версии без ошибок | Не предъявлено; проверен только перезапуск той же модели под трафиком |
+| Полный deploy на своём runner | [GitHub Actions](https://github.com/SunchesSun/credit-service/actions/runs/38985932015) |
+
+Ссылки MLflow локальные: работают, пока сохранён кластер и его хранилища.
+Дополнительные задания со звёздочкой не заявляются выполненными.
 
 ## Ответы на восемь вопросов
 
-### 1. Почему облачные tests и build, но локальный deploy
+1. **Как восстановить код и данные модели N?** В Model registry run_id версии, затем data_md5, параметры обучения, seed, metadata.json и зависимости. Для обучения из Git использую тег mlflow.source.git.commit, если он записан; для pod — SHA образа из логов соответствующего DAG и CI, поскольку в образе нет .git. Переключаю Git на этот SHA, устанавливаю uv.lock и выполняю dvc pull по указателю с нужным MD5; автоматическая связь каждого pod-run с Git SHA отдельным тегом сейчас не реализована.
 
-Tests и build не требуют доступа к локальному kind-кластеру, поэтому выполняются на runner GitHub. Кластер находится в локальной Docker-сети за NAT и напрямую недоступен такому runner. Код можно было бы доставлять через публичный API Kubernetes, VPN/туннель или GitOps-контроллер, который сам забирает изменения; здесь выбран runner в сети kind, потому что ему доступны кластер и локальный Docker daemon.
+2. **Почему в образе указатели, а не данные?** Указатель фиксирует нужную версию, а CSV скачивается отдельно из S3 перед задачей и не увеличивает образ. Если git push опередит dvc push, новый образ может ссылаться на ещё отсутствующий объект: dvc pull упадёт в validate или train, причина будет в логах Airflow.
 
-### 2. Зачем runner три параметра Docker
+3. **Какие проверки бинарные, какие пороговые?** Типы, допустимые категории и уникальность ID проверяются как соответствие контракту; возраст, сумма, срок, объём и доля bad сравниваются с границами. Все проверки в итоге дают успех или ошибку, но числовые допуски требуют обоснования по данным, приведённого в пункте 4. Слишком строгие границы остановят корректную новую выгрузку и переобучение, поэтому нужно разбирать failure_cases, а не автоматически расширять схему.
 
-`--network kind` даёт контейнеру runner доступ к адресу `mlpro3-control-plane` внутри Docker-сети; без него кластер по этому имени не виден. Монтирование `/var/run/docker.sock` позволяет шагам `docker pull` и `kind load docker-image` обращаться к Docker daemon хоста; без сокета эти команды не смогут работать с Docker хоста. `--group-add 0` добавляет группу root и помог бы, если бы сокет принадлежал этой группе, но в текущем запуске сокет имеет группу `runner` (GID 1001), в которой пользователь runner уже состоит; поэтому именно здесь удаление `--group-add 0` не должно лишить его доступа к сокету.
+4. **Зачем и Pandera, и Pydantic?** Pydantic проверяет отдельный входящий запрос API и его признаки. Pandera проверяет обучающую таблицу, включая target, уникальность записей, объём и распределение класса; эти свойства невозможно проверить по одной заявке.
 
-### 3. Зачем `--dry-run=client -o yaml | kubectl apply`
+5. **Почему обучение в отдельном pod и зачем тот же образ?** Так задача получает зависимости проекта из uv.lock, а Airflow остаётся оркестратором и не требует установки ML-библиотек в свой контейнер. Новая модель лежит в MLflow: после изменения champion достаточно перезапуска API, который загрузит alias заново; пересборка нужна при изменении кода или зависимостей.
 
-`kubectl create secret` без этого конвейера завершился бы ошибкой `AlreadyExists` при втором деплое. Команда с `--dry-run=client` формирует манифест, а `kubectl apply` создаёт Secret при первом запуске и обновляет его при повторном. Пароль передаётся из GitHub Secret в шаг deploy.
+6. **Какие метрики про что и почему без request_id?** RPS, p50/p95 и HTTP-коды относятся к сервису, версия модели, распределение score и доля предсказанного bad — к модели. Инфраструктуру проверяем через up, состояние Kubernetes и kubectl top; отдельных CPU/RAM-панелей на этом дашборде нет. Request_id почти всегда уникален и создавал бы новую временную серию на каждый запрос; для него есть журнал PostgreSQL.
 
-### 4. `challenger`, `champion` и два отката
+7. **Что происходит при rollout и зачем preStop?** Kubernetes постепенно создаёт новые pod, ждёт готовности и завершает старые; до готовности новые реплики не обслуживают трафик. Пауза preStop даёт время обновить маршрутизацию перед остановкой процесса. На перезапуске той же модели было 896 запросов без ошибок; без preStop отдельного прогона не было, а смена версии через DAG ещё не проверена.
 
-Каждая обученная версия получает `challenger`; `champion` переносится только при прохождении гейта PR-AUC. Сервис запрашивает алиас, чтобы можно было заменить модель без изменения образа и кода: для отката алиас вернули с версии 5 на 3 и перезапустили pod. `rollout undo` вместо этого откатывает Kubernetes Deployment к прошлой конфигурации и образу; он не меняет алиасы MLflow.
+8. **Какой отказ наиболее вероятен и что делать?** Судя по опыту наиболее вероятный отказ это недоступность реестра образов или S3 из-за сети, DNS или прокси. Он обнаружится при следующем скачивании в deploy/DAG; фиксированное время обнаружения и автоматические алерты не настроены. Проверю Events pod и логи dvc pull/контейнера, затем доступ к endpoint и настройки сети; работающий champion при отказе validate продолжает обслуживать API.
 
-### 5. Деплой до обучения первой модели
+## Журнал проблем и переделки
 
-Если алиас `german-credit@champion` ещё не создан, загрузка модели при старте сервиса завершится ошибкой. Аналогичный сценарий отсутствующего алиаса проверен с `MODEL_ALIAS: prod` в [красном прогоне](https://github.com/SunchesSun/credit-service/actions/runs/38794024372): новый pod перезапускался с ошибкой `Registered model alias prod not found.`, шаг `сервис` завершился ошибкой, а диагностика выполнилась. См. [deploy и шаг диагностики](https://github.com/SunchesSun/credit-service/actions/runs/38794024372/job/116626134231#logs). Опыт проводился с уже существующей моделью и отсутствующим `prod`; развёртывание до первого обучения отдельно не выполнялось.
-
-### 6. Путь запроса к MLflow
-
-Браузер открывает `http://mlflow.localhost` на порту 80 хоста. Проброс kind ведёт на порт 30080 узла, Traefik выбирает маршрут Ingress по имени хоста и отправляет запрос через Service `mlflow` на порт 5000 pod. `--allowed-hosts` разрешает эти Host-заголовки, а `--cors-allowed-origins` разрешает обращения UI с `http://mlflow.localhost`; порт 80 закреплён в конфигурации kind при создании контейнера узла.
-
-### 7. Расчёт числа реплик HPA
-
-При 5 пользователях HPA видел 102% CPU на двух pod при цели 60%: `ceil(2 × 102 / 60) = 4`, и наблюдалось увеличение до 4. В прогоне с 10 пользователями при четырёх pod измерено 212%: формула дала бы `ceil(4 × 212 / 60) = 15`, но `maxReplicas=6`, поэтому HPA остановился на 6. После прекращения нагрузки снижение заняло около 5 минут 36 секунд из-за окна стабилизации, которое удерживает предыдущие рекомендации.
-
-### 8. Что хранит Git и как восстановить данные версии модели
-
-Git хранит `.dvc`-указатель с MD5 и размером CSV, а содержимое файла находится в локальном DVC remote `../dvc-storage`. Чтобы восстановить данные модели, нужно найти у её запуска MLflow параметр `data_md5`, выбрать коммит с таким MD5 в `datasets/german_credit_data.csv.dvc`, извлечь этот указатель и выполнить `dvc pull` или `dvc checkout`, затем сверить MD5 восстановленного CSV. Для версии модели 6 подходит исходный указатель из коммита `9030a29` с MD5 `3086216ff1ff32f7626554e730cccc91`; для версии 7 — указатель из `6e15c46` с MD5 `75716716a440972dfc0fed80bb7791cc`.
-
-## Журнал проблем третьей работы
-
-| Проблема | Как нашли причину | Исправление |
-|---|---|---|
-| Metrics API отсутствовал | До установки metrics-server `kubectl top nodes` отвечал `Metrics API not available` | Установлен чарт metrics-server 3.14.0 с флагом `--kubelet-insecure-tls`; после этого `kubectl top` показал CPU и память |
-| Pod metrics-server находился в `ImagePullBackOff` | События pod содержали ошибку подключения к IPv6-адресу `registry.k8s.io` | Образ получен через `docker pull` на хосте и проверен в kind через `kind load docker-image`; Helm завершил установку |
-| После изменения memory request HPA временно показывал `<unknown>` | `kubectl describe hpa` сообщил `FailedGetResourceMetric`: для новых pod ещё не было метрик CPU | После сбора следующей выборки метрик HPA снова показал 1%/60%; обе реплики оставались Ready |
+| Проблема | Причина и выполненное исправление |
+| --- | --- |
+| Kubernetes API недоступен с хоста | Пересечение маршрутов Docker и eth0;  добавил маршрут к проверенному адресу узла |
+| Helm: context deadline exceeded, ImagePullBackOff | Loopback-прокси хоста оказался недоступен внутри kind; up.sh исключает его при создании узла. Отдельные TLS/DNS-сбои обошел загрузкой образов на хосте и kind load |
+| Python: имя s3.localhost не разрешается | Имена платформы добавлены в /etc/hosts |
+| Первый локальный DAG: ErrImagePull | Запуск опередил завершение kind load; повторный запуск после загрузки образа прошёл |
+| API: password authentication failed | Secret CI отличался от пароля существующей БД; пароль роли однократно согласован без пересоздания |
+| Pandera отклонила выгрузку | Тестовая ошибка единиц суммы кредита; хороший указатель восстановлен, повторный validate успешен |
