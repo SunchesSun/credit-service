@@ -47,7 +47,7 @@ uv run dvc push
 ```
 
 `dvc push` должен завершиться до `git push`, чтобы опубликованный указатель
-ссылался на уже доступные данные. Коммиты и git push выполняются пользователем.
+ссылался на уже доступные данные.
 
 В поде используется `uv run --no-sync dvc pull -r cluster`. Ключи передаются
 через `AWS_ACCESS_KEY_ID` и `AWS_SECRET_ACCESS_KEY` из секрета `s3-credentials`

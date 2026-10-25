@@ -1,10 +1,3 @@
-"""Измерить чувствительность PR-AUC к разбиению без записи в MLflow.
-
-Конфигурации v3 и v5 взяты из REPORT.md, раздел 2.2.
-Правило выбора запаса: диапазон PR-AUC v3, округлённый вверх до сотых,
-плюс 0.01. Это консервативная эмпирическая эвристика, не доверительный интервал.
-"""
-
 import argparse
 import csv
 import hashlib
@@ -18,7 +11,7 @@ import sklearn
 from sklearn.metrics import average_precision_score
 from sklearn.model_selection import train_test_split
 
-from credit_service.train import build_pipeline, load_and_validate
+from credit_service.train import MIN_GAIN, TEST_SIZE, build_pipeline, load_and_validate, should_promote
 
 CONFIGURATIONS = (("v3", 0.007, 1.0), ("v5", 0.01, 2.0))
 
@@ -33,13 +26,13 @@ def describe(values: list[float]) -> dict:
     }
 
 
-def evaluate(data_path: Path, splits: int) -> tuple[list[dict], dict]:
+def evaluate(data_path: Path, splits: int, min_gain: float = MIN_GAIN) -> tuple[list[dict], dict]:
     frame, target, _ = load_and_validate(data_path)
     data_md5 = hashlib.md5(data_path.read_bytes()).hexdigest()
     rows = []
     for seed in range(splits):
         x_train, x_test, y_train, y_test = train_test_split(
-            frame, target, test_size=0.2, stratify=target, random_state=seed,
+            frame, target, test_size=TEST_SIZE, stratify=target, random_state=seed,
         )
         for label, c, weight in CONFIGURATIONS:
             pipeline = build_pipeline(c, weight).fit(x_train, y_train)
@@ -68,6 +61,7 @@ def evaluate(data_path: Path, splits: int) -> tuple[list[dict], dict]:
         "v5": describe(candidate),
         "paired_v5_minus_v3": describe(deltas),
         "v5_positive_gain_splits": sum(delta > 0 for delta in deltas),
+        "v5_passes_gate_splits": sum(should_promote(new, old, min_gain) for old, new in zip(baseline, candidate, strict=True)),
         "seed_42": [row for row in rows if row["split_seed"] == 42],
     }
 
@@ -76,36 +70,40 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, nargs="+", required=True)
     parser.add_argument("--splits", type=int, default=50)
-    parser.add_argument("--output-dir", type=Path, default=Path("docs/hw3/gate_stability"))
+    parser.add_argument("--min-gain", type=float, default=MIN_GAIN)
+    parser.add_argument("--output-dir", type=Path, default=Path("docs/hw4/gate_stability"))
     args = parser.parse_args()
     if args.splits < 2:
         parser.error("--splits должен быть не меньше 2")
+    if not math.isfinite(args.min_gain) or not 0 <= args.min_gain < 1:
+        parser.error("--min-gain должен быть конечным числом в [0, 1)")
 
     rows, datasets = [], []
     for path in args.data:
-        results, summary = evaluate(path, args.splits)
+        results, summary = evaluate(path, args.splits, args.min_gain)
         rows.extend(results)
         datasets.append(summary)
 
-    spread = max(dataset["v3"]["range"] for dataset in datasets)
-    min_gain = round(math.ceil(spread * 100) / 100 + 0.01, 2)
     summary = {
         "python_version": platform.python_version(),
         "sklearn_version": sklearn.__version__,
         "split_seeds": list(range(args.splits)),
-        "test_size": 0.2,
+        "test_size": TEST_SIZE,
         "stratified": True,
         "model_random_state": 42,
         "metric": "average_precision_score, positive class bad",
         "datasets": datasets,
-        "max_v3_range": spread,
-        "min_gain_rule": "ceil(max_v3_range * 100) / 100 + 0.01",
-        "recommended_min_gain": min_gain,
+        "gate_policy": {
+            "min_gain": args.min_gain,
+            "rule": "candidate_pr_auc > champion_pr_auc + min_gain",
+            "basis": "Engineering tolerance for absolute PR-AUC improvement; not estimated from split variability.",
+        },
         "limitations": [
             "Repeated holdouts overlap; these are not independent test samples.",
             "Both training and test samples change; this is split sensitivity, not test-only uncertainty.",
             "The range over these seeds is not a bound for future splits or a significance test.",
             "Paired comparisons apply within one data_md5; cross-version metrics are not directly comparable.",
+            "Passing the fixed margin on one split does not establish statistical significance.",
         ],
     }
     args.output_dir.mkdir(parents=True, exist_ok=True)

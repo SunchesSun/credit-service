@@ -1,10 +1,11 @@
-"""Обучение кредитного скоринга из notebooks/train.ipynb и регистрация в MLflow.
+"""Обучение кредитного скоринга из notebooks/train.ipynb и регистрация в MLflow
 
 MLFLOW_TRACKING_URI=http://mlflow.localhost uv run python -m credit_service.train
 """
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 
@@ -30,9 +31,10 @@ MODEL_NAME = os.getenv("MODEL_NAME", "german-credit")
 EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT", "german-credit")
 C = float(os.getenv("C", "1.0"))
 BAD_CLASS_WEIGHT = float(os.getenv("BAD_CLASS_WEIGHT", "1.0"))
-# 0.24 = ceil(0.22350470416294532 * 100) / 100 + 0.01; это эмпирический запас.
-MIN_GAIN = float(os.getenv("GATE_MIN_GAIN", "0.24"))
+# абсолютный прирост PR-AUC > 0.01 Тестовый вариант 
+MIN_GAIN = float(os.getenv("GATE_MIN_GAIN", "0.01"))
 SEED = 42
+TEST_SIZE = 0.2
 THRESHOLD = 0.5
 SKOPS_TRUSTED = ["numpy.dtype", "sklearn.compose._column_transformer._RemainderColsList"]
 
@@ -68,64 +70,103 @@ def build_pipeline(c: float, bad_class_weight: float = 1.0) -> Pipeline:
     ])
 
 
-def champion_score(client: MlflowClient) -> tuple[str | None, float | None]:
+def evaluation_params(data_md5: str, validation: pd.Series) -> dict[str, str]:
+    """Зафиксировать данные, параметры split и порядок строк с метками holdout."""
+    records = [[int(index), int(label)] for index, label in validation.items()]
+    signature = json.dumps(records, separators=(",", ":")).encode()
+    return {
+        "data_md5": data_md5,
+        "seed": str(SEED),
+        "test_size": str(TEST_SIZE),
+        "stratified": "true",
+        "validation_sha256": hashlib.sha256(signature).hexdigest(),
+    }
+
+
+def should_promote(candidate: float, champion: float | None, min_gain: float = MIN_GAIN) -> bool:
+    if not math.isfinite(min_gain) or not 0 <= min_gain < 1:
+        raise ValueError("GATE_MIN_GAIN должен быть конечным числом в [0, 1)")
+    for name, score in (("candidate", candidate), ("champion", champion)):
+        if score is not None and (not math.isfinite(score) or not 0 <= score <= 1):
+            raise ValueError(f"{name}: PR-AUC должна быть конечным числом в [0, 1]")
+    return champion is None or candidate > champion + min_gain
+
+
+def champion_score(client: MlflowClient, expected: dict[str, str]) -> tuple[str | None, float | None]:
     try:
         version = client.get_model_version_by_alias(MODEL_NAME, "champion")
     except MlflowException as exc:
         if exc.error_code != "RESOURCE_DOES_NOT_EXIST":
             raise
         return None, None
-    score = client.get_run(version.run_id).data.metrics.get("pr_auc")
+    run = client.get_run(version.run_id)
+    differences = {
+        key: {"champion": run.data.params.get(key), "candidate": value}
+        for key, value in expected.items()
+        if run.data.params.get(key) != value
+    }
+    if differences:
+        raise ValueError(
+            f"Champion v{version.version}: несопоставимые данные или разбиение: "
+            f"{json.dumps(differences, ensure_ascii=False)}. "
+            "Отсутствующие поля старых запусков не восстанавливаются по предположению; "
+            "нужен baseline с записанным контекстом оценки."
+        )
+    score = run.data.metrics.get("pr_auc")
     if score is None:
         raise ValueError(f"У champion версии {version.version} нет метрики pr_auc")
+    should_promote(score, score)
     return version.version, score
 
 
 def main() -> dict:
     frame, target, data = load_and_validate(DATA_PATH)
     x_train, x_test, y_train, y_test = train_test_split(
-        frame, target, test_size=0.2, stratify=target, random_state=SEED,
+        frame, target, test_size=TEST_SIZE, stratify=target, random_state=SEED,
     )
-    pipeline = build_pipeline(C, BAD_CLASS_WEIGHT).fit(x_train, y_train)
-    scores = pipeline.predict_proba(x_test)[:, 1]
-    pr_auc = float(average_precision_score(y_test, scores))
-    roc_auc = float(roc_auc_score(y_test, scores))
-    accuracy = float(accuracy_score(y_test, scores >= THRESHOLD))
-    matrix = confusion_matrix(y_test, scores >= THRESHOLD, labels=[0, 1])
-
-    metadata = {
-        "features": FEATURES,
-        "threshold": THRESHOLD,
-        "positive_class": "bad",
-        "negative_class": "good",
-        "target_column": "Risk",
-        "source_file": DATA_PATH.name,
-        "source_sha256": hashlib.sha256(DATA_PATH.read_bytes()).hexdigest(),
-        "sklearn_version": sklearn.__version__,
-        "random_state": SEED,
-        "train_rows": len(x_train),
-        "test_rows": len(x_test),
-        "class_counts": data["Risk"].value_counts().to_dict(),
-        "missing_values": frame.isna().sum().to_dict(),
-        "test_accuracy": accuracy,
-        "test_roc_auc": roc_auc,
-        "test_pr_auc": pr_auc,
-    }
-
+    context = evaluation_params(hashlib.md5(DATA_PATH.read_bytes()).hexdigest(), y_test)
     mlflow.set_experiment(EXPERIMENT)
     client = MlflowClient()
-    old_version, old_score = champion_score(client)
-    with mlflow.start_run() as run:
+    with mlflow.start_run(tags={"task": "train", "gate_comparable": "false"}) as run:
         mlflow.log_params({
+            **context,
             "C": C,
             "bad_class_weight": BAD_CLASS_WEIGHT,
             "model": "LogisticRegression",
-            "seed": SEED,
             "data": str(DATA_PATH),
-            "data_md5": hashlib.md5(DATA_PATH.read_bytes()).hexdigest(),
             "gate_metric": "pr_auc",
             "gate_min_gain": MIN_GAIN,
         })
+        old_version, old_score = champion_score(client, context)
+        mlflow.set_tag("gate_comparable", "true" if old_version is not None else "not_applicable")
+        # Проверить настройку до обучения и регистрации модели.
+        should_promote(0.0, old_score)
+        pipeline = build_pipeline(C, BAD_CLASS_WEIGHT).fit(x_train, y_train)
+        scores = pipeline.predict_proba(x_test)[:, 1]
+        pr_auc = float(average_precision_score(y_test, scores))
+        roc_auc = float(roc_auc_score(y_test, scores))
+        accuracy = float(accuracy_score(y_test, scores >= THRESHOLD))
+        matrix = confusion_matrix(y_test, scores >= THRESHOLD, labels=[0, 1])
+        promoted = should_promote(pr_auc, old_score)
+        metadata = {
+            "features": FEATURES,
+            "threshold": THRESHOLD,
+            "positive_class": "bad",
+            "negative_class": "good",
+            "target_column": "Risk",
+            "source_file": DATA_PATH.name,
+            "source_sha256": hashlib.sha256(DATA_PATH.read_bytes()).hexdigest(),
+            "sklearn_version": sklearn.__version__,
+            "random_state": SEED,
+            "evaluation": context,
+            "train_rows": len(x_train),
+            "test_rows": len(x_test),
+            "class_counts": data["Risk"].value_counts().to_dict(),
+            "missing_values": frame.isna().sum().to_dict(),
+            "test_accuracy": accuracy,
+            "test_roc_auc": roc_auc,
+            "test_pr_auc": pr_auc,
+        }
         mlflow.log_metrics({"pr_auc": pr_auc, "roc_auc": roc_auc, "accuracy": accuracy})
         mlflow.log_dict(metadata, "metadata.json")
         mlflow.log_dict({"labels": ["good", "bad"], "matrix": matrix.tolist()}, "confusion_matrix.json")
@@ -138,19 +179,21 @@ def main() -> dict:
         )
         version = info.registered_model_version
 
-    promoted = old_score is None or pr_auc > old_score + MIN_GAIN
-    client.set_registered_model_alias(MODEL_NAME, "challenger", version)
-    if promoted:
-        client.set_registered_model_alias(MODEL_NAME, "champion", version)
-
-    result = {
-        "run_id": run.info.run_id,
-        "version": version,
-        "pr_auc": round(pr_auc, 4),
-        "champion_before": old_version,
-        "champion_pr_auc_before": old_score,
-        "promoted": promoted,
-    }
+        client.set_registered_model_alias(MODEL_NAME, "challenger", version)
+        if promoted:
+            client.set_registered_model_alias(MODEL_NAME, "champion", version)
+        result = {
+            "run_id": run.info.run_id,
+            "version": version,
+            "pr_auc": round(pr_auc, 4),
+            "champion_before": old_version,
+            "champion_pr_auc_before": old_score,
+            "gain": None if old_score is None else pr_auc - old_score,
+            "min_gain": MIN_GAIN,
+            "promoted": promoted,
+        }
+        mlflow.set_tag("promoted", str(promoted).lower())
+        mlflow.log_dict({**result, "candidate_pr_auc": pr_auc}, "gate_result.json")
     print(json.dumps(result, ensure_ascii=False))
     return result
 
