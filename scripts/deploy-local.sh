@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 cluster_name="${KIND_CLUSTER:-mlpro3}"
 context_name="kind-$cluster_name"
-image="credit-service:local-$(date +%s)"
+image="${CREDIT_IMAGE:-credit-service:local-$(date +%s)}"
 kube() { kubectl --context "$context_name" "$@"; }
 
 # Существующий пароль не меняем. Для новой учебной базы используется postgres.
@@ -13,7 +13,11 @@ fi
 kube apply -f k8s/postgres.yaml
 kube rollout status deploy/postgres --timeout=180s
 
-docker buildx build --load -t "$image" .
+if [[ -n "${CREDIT_IMAGE:-}" ]]; then
+  docker image inspect "$image" >/dev/null
+else
+  docker buildx build --load -t "$image" .
+fi
 kind load docker-image "$image" --name "$cluster_name"
 kube apply -f k8s/configmap.yaml -f k8s/service.yaml -f k8s/ingress.yaml -f k8s/hpa.yaml
 kubectl set image --local -f k8s/deployment.yaml api="$image" -o yaml | kube apply -f -

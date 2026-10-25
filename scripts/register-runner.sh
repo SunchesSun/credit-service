@@ -9,6 +9,16 @@ if docker container inspect gh-runner >/dev/null 2>&1; then
 else
   docker run -d --name gh-runner --network kind --group-add "$(stat -c '%g' /var/run/docker.sock)" -v /var/run/docker.sock:/var/run/docker.sock --entrypoint /bin/bash ghcr.io/actions/actions-runner:2.337.0 -lc 'sleep infinity'
 fi
+runner_state="$(docker inspect gh-runner --format '{{.State.Status}}')"
+if [[ "$runner_state" != running ]]; then
+  echo "Контейнер gh-runner имеет статус $runner_state; регистрация не проверялась." >&2
+  docker logs --tail 10 gh-runner >&2
+  exit 1
+fi
+if ! docker exec gh-runner /bin/bash -c 'test -x /home/runner/bin/Runner.Listener'; then
+  echo "Runner.Listener отсутствует или недоступен; проверь docker logs gh-runner." >&2
+  exit 1
+fi
 if ! docker exec gh-runner test -f /home/runner/.runner; then
   read -r -s -p 'Registration token из GitHub Settings → Actions → Runners: ' runner_token
   echo
