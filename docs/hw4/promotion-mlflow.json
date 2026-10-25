@@ -1,0 +1,52 @@
+{
+  "model": "german-credit",
+  "aliases": {
+    "champion": {
+      "version": "2",
+      "run_id": "4381f58e106746919bf106aa4b4e6c74"
+    },
+    "challenger": {
+      "version": "2",
+      "run_id": "4381f58e106746919bf106aa4b4e6c74"
+    }
+  },
+  "versions": {
+    "1": {
+      "run_id": "5793e15090424f7291ca6150fef40c6a",
+      "pr_auc": 0.6241999967409972,
+      "parameters": {
+        "C": "0.007",
+        "bad_class_weight": "1.0",
+        "data_md5": "75716716a440972dfc0fed80bb7791cc",
+        "seed": "42",
+        "test_size": "0.2",
+        "stratified": "true",
+        "validation_sha256": "a54e53d8fadd87d3f1e64e09c87bfacacfea6831914e17e8d085e95b34802ecc",
+        "gate_min_gain": "0.01"
+      },
+      "tags": {
+        "gate_comparable": "not_applicable",
+        "promoted": "true"
+      }
+    },
+    "2": {
+      "run_id": "4381f58e106746919bf106aa4b4e6c74",
+      "pr_auc": 0.6343304540736708,
+      "parameters": {
+        "C": "0.01",
+        "bad_class_weight": "2.0",
+        "data_md5": "75716716a440972dfc0fed80bb7791cc",
+        "seed": "42",
+        "test_size": "0.2",
+        "stratified": "true",
+        "validation_sha256": "a54e53d8fadd87d3f1e64e09c87bfacacfea6831914e17e8d085e95b34802ecc",
+        "gate_min_gain": "0.01"
+      },
+      "tags": {
+        "gate_comparable": "true",
+        "promoted": "true"
+      }
+    }
+  },
+  "paired_pr_auc_gain": 0.010130457332673592
+}

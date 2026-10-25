@@ -1,0 +1,30 @@
+{
+  "aliases": {
+    "champion": {
+      "version": "2",
+      "run_id": "4381f58e106746919bf106aa4b4e6c74"
+    },
+    "challenger": {
+      "version": "3",
+      "run_id": "ee0b7bc37d544210a4347cb8fda2d737"
+    }
+  },
+  "versions": {
+    "2": {
+      "run_id": "4381f58e106746919bf106aa4b4e6c74",
+      "pr_auc": 0.6343304540736708,
+      "C": "0.01",
+      "bad_class_weight": "2.0",
+      "promoted": "true",
+      "gate_comparable": "true"
+    },
+    "3": {
+      "run_id": "ee0b7bc37d544210a4347cb8fda2d737",
+      "pr_auc": 0.6107379541696142,
+      "C": "1.0",
+      "bad_class_weight": "1.0",
+      "promoted": "false",
+      "gate_comparable": "true"
+    }
+  }
+}
