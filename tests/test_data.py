@@ -32,9 +32,10 @@ def test_good_rows_pass(sample):
 
 @pytest.mark.parametrize("column,value", [
     ("Age", 0),
+    ("Age", 120),
     ("Age", 35.5),
     ("Credit amount", -1),
-    ("Duration", 365),
+    ("Duration", 0),
     ("Sex", "unknown"),
     ("Risk", "unknown"),
 ])
@@ -68,6 +69,12 @@ def full_batch(sample):
 
 def test_full_batch_passes(sample):
     assert len(validate_data(full_batch(sample))) == 800
+
+
+def test_values_outside_observed_csv_ranges_pass(sample):
+    frame = full_batch(sample)
+    frame.loc[0, ["age", "credit_amount", "duration"]] = [76, 20_000, 73]
+    assert len(validate_data(frame)) == 800
 
 
 def test_single_class_batch_is_rejected(sample):
