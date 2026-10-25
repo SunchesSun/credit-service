@@ -71,7 +71,7 @@ def main() -> None:
     parser.add_argument("--data", type=Path, nargs="+", required=True)
     parser.add_argument("--splits", type=int, default=50)
     parser.add_argument("--min-gain", type=float, default=MIN_GAIN)
-    parser.add_argument("--output-dir", type=Path, default=Path("docs/hw4/gate_stability"))
+    parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     if args.splits < 2:
         parser.error("--splits должен быть не меньше 2")

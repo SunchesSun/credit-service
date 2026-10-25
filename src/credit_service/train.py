@@ -31,7 +31,7 @@ MODEL_NAME = os.getenv("MODEL_NAME", "german-credit")
 EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT", "german-credit")
 C = float(os.getenv("C", "1.0"))
 BAD_CLASS_WEIGHT = float(os.getenv("BAD_CLASS_WEIGHT", "1.0"))
-# абсолютный прирост PR-AUC > 0.01 Тестовый вариант 
+# абсолютный прирост PR-AUC > 0.01 Тестовый вариант
 MIN_GAIN = float(os.getenv("GATE_MIN_GAIN", "0.01"))
 SEED = 42
 TEST_SIZE = 0.2

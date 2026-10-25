@@ -28,17 +28,17 @@ FEATURES = list(COLUMNS.values())
 NUMERIC = ["age", "credit_amount", "duration"]
 CATEGORICAL = [name for name in FEATURES if name not in NUMERIC]
 
-# Категории и допустимые пропуски 
+# Числовые границы согласованы с API; экстремумы текущего CSV не ограничивают новые выгрузки.
 ROW_SCHEMA = pa.DataFrameSchema({
     "record_id": pa.Column(int, pa.Check.ge(0), unique=True, required=False),
-    "age": pa.Column(int, pa.Check.in_range(19, 75)),
+    "age": pa.Column(int, [pa.Check.gt(0), pa.Check.lt(120)]),
     "sex": pa.Column(str, pa.Check.isin(["female", "male"])),
     "job": pa.Column(int, pa.Check.in_range(0, 3)),
     "housing": pa.Column(str, pa.Check.isin(["free", "own", "rent"])),
     "saving_accounts": pa.Column(str, pa.Check.isin(["little", "moderate", "quite rich", "rich"]), nullable=True),
     "checking_account": pa.Column(str, pa.Check.isin(["little", "moderate", "rich"]), nullable=True),
-    "credit_amount": pa.Column(float, pa.Check.in_range(250, 18424), coerce=True),
-    "duration": pa.Column(int, pa.Check.in_range(4, 72)),
+    "credit_amount": pa.Column(float, pa.Check.gt(0), coerce=True),
+    "duration": pa.Column(int, pa.Check.gt(0)),
     "purpose": pa.Column(str, pa.Check.isin([
         "business", "car", "domestic appliances", "education", "furniture/equipment",
         "radio/TV", "repairs", "vacation/others",
